@@ -1,7 +1,8 @@
 "use client";
 import { useState, useContext } from "react";
 import { useRouter } from "next/navigation";
-
+import { CartContext } from "@/context/CartContext";
+import HCaptcha from "@hcaptcha/react-hcaptcha"; // npm i @hcaptcha/react-hcaptcha (in package.json)
 
 export default function Checkout() {
   const { cart, clear } = useContext(CartContext);
@@ -12,7 +13,7 @@ export default function Checkout() {
   async function placeOrder(e) {
     e.preventDefault(); setErr(""); setOk("Placing your order…");
     const form = Object.fromEntries(new FormData(e.target));
-    const { data: { session } } = await (await import).supabaseBrowser().auth.getSession();
+    const { data: { session } } = await (await import("@/lib/supabase")).supabaseBrowser().auth.getSession();
     if (!session) return setErr("Please login with your mobile number first.");
 
     const res = await fetch("/api/orders", {
