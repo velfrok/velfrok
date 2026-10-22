@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-
+import HCaptcha from "@hcaptcha/react-hcaptcha";
 
 const UPI_ID = process.env.NEXT_PUBLIC_UPI_ID;
 const NAME = process.env.NEXT_PUBLIC_UPI_NAME;
@@ -28,7 +28,7 @@ export default function PaymentPage({ params }) {
 
   async function submitUtr() {
     setErr("");
-    const { data: { session } } = await (await import).supabaseBrowser().auth.getSession();
+    const { data: { session } } = await (await import("@/lib/supabase")).supabaseBrowser().auth.getSession();
     const res = await fetch("/api/payment/submit", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ token, utr, captcha }),
@@ -54,8 +54,9 @@ export default function PaymentPage({ params }) {
         <form onSubmit={e => { e.preventDefault(); submitUtr(); }}>
           <input value={utr} onChange={e => setUtr(e.target.value)}
             placeholder="Enter UPI Transaction ID (UTR)" required />
-          
-          <I have paid — Submit UTR</button>
+          <HCaptcha sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITEKEY}
+            onVerify={setCaptcha} />
+          <button disabled={!captcha || !utr}>I have paid — Submit UTR</button>
         </form>
       )}
       {err && <p className="err" role="alert">{err}</p>}
