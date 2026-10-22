@@ -54,9 +54,8 @@ export default function PaymentPage({ params }) {
         <form onSubmit={e => { e.preventDefault(); submitUtr(); }}>
           <input value={utr} onChange={e => setUtr(e.target.value)}
             placeholder="Enter UPI Transaction ID (UTR)" required />
-          <HCaptcha sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITEKEY}
-            onVerify={setCaptcha} />
-          <button disabled={!captcha || !utr}>I have paid — Submit UTR</button>
+          
+          <I have paid — Submit UTR</button>
         </form>
       )}
       {err && <p className="err" role="alert">{err}</p>}
