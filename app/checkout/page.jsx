@@ -2,7 +2,7 @@
 import { useState, useContext } from "react";
 import { useRouter } from "next/navigation";
 import { CartContext } from "@/context/CartContext";
-import HCaptcha from "@hcaptcha/react-hcaptcha"; // npm i @hcaptcha/react-hcaptcha (in package.json)
+
 
 export default function Checkout() {
   const { cart, clear } = useContext(CartContext);
