@@ -1,15 +1,52 @@
 import ProductGrid from "@/components/ProductGrid";
 import { supabaseBrowser } from "@/lib/supabase";
 
-export const revalidate = 60; // ISR: fast + fresh
+export const revalidate = 60;
 
 export default async function Home() {
-  const { data: products } = await supabaseBrowser()
-    .from("products").select("*").eq("is_active", true).order("created_at", { ascending: false });
+  let products = [];
+  let loadError = false;
+  try {
+    const { data, error } = await supabaseBrowser()
+      .from("products")
+      .select("*")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+    if (error) loadError = true;
+    products = data || [];
+  } catch {
+    loadError = true;
+  }
+
   return (
     <>
-      <section className="hero"><h1>VELFROK</h1><p>Your Daily Essential</p></section>
-      <ProductGrid products={products || []} />
+      <section className="hero">
+        <div className="hero-copy">
+          <p className="eyebrow">THE EVERYDAY EDIT</p>
+          <h1>Little things.<br /><em>Better living.</em></h1>
+          <p className="hero-description">
+            Useful everyday essentials, selected to make your routine feel a little easier.
+          </p>
+          <a className="button button-dark" href="#shop">Explore the collection <span aria-hidden="true">↗</span></a>
+        </div>
+        <div className="hero-art" aria-label="VELFROK everyday essentials">
+          <div className="hero-orbit orbit-one" />
+          <div className="hero-orbit orbit-two" />
+          <div className="hero-stamp">GOOD<br />THINGS<br />DAILY</div>
+          <div className="hero-caption">Curated for your everyday.</div>
+        </div>
+      </section>
+      <section className="trust-strip" aria-label="Store benefits">
+        <span>Thoughtfully selected</span><span>Everyday essentials</span><span>Simple, useful, reliable</span>
+      </section>
+      <section id="shop" className="shop-section">
+        <div className="section-heading">
+          <div><p className="eyebrow">THE COLLECTION</p><h2>Shop essentials<span>.</span></h2></div>
+          <p>Find your next everyday favourite.</p>
+        </div>
+        {loadError && <p className="notice" role="status">Products could not be loaded right now. Please check back shortly.</p>}
+        <ProductGrid products={products} />
+      </section>
     </>
   );
 }
