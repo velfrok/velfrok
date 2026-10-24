@@ -7,5 +7,21 @@ export const metadata = {
 };
 export const viewport = { width: "device-width", initialScale: 1 }; // mobile optimized
 export default function RootLayout({ children }) {
-  return (<html lang="en"><body>{children}</body></html>);
+  return (<html lang="en"><body>{export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-gray-50 text-gray-900">
+        {/* Every page now fades in smoothly */}
+        <main className="fade-in">
+          {children}
+        </main>
+      </body>
+    </html>
+  );
+}
+}</body></html>);
 }
