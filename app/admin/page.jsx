@@ -26,7 +26,9 @@ export default function AdminDashboard() {
         margin: "0 auto 36px",
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "center"
+        alignItems: "center",
+        gap: 16,
+        flexWrap: "wrap"
       }}>
         <Link href="/" style={{
           fontSize: 24,
@@ -37,7 +39,28 @@ export default function AdminDashboard() {
         }}>
           VELFROK<span style={{ color: "#e87528" }}>.</span>
         </Link>
-        <span style={{ color: "#68738a" }}>Admin panel</span>
+
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          flexWrap: "wrap"
+        }}>
+          <span style={{ color: "#68738a" }}>Admin panel</span>
+          <form action="/api/admin/logout" method="POST">
+            <button type="submit" style={{
+              background: "#172033",
+              color: "#fff",
+              border: 0,
+              borderRadius: 8,
+              padding: "10px 16px",
+              fontWeight: 700,
+              cursor: "pointer"
+            }}>
+              Log out
+            </button>
+          </form>
+        </div>
       </header>
 
       <section style={{ maxWidth: 1100, margin: "auto" }}>
