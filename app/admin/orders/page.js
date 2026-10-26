@@ -29,9 +29,7 @@ export default function OrdersPage() {
           setOrders(Array.isArray(result.orders) ? result.orders : []);
         }
       } catch (err) {
-        if (active) {
-          setError(err.message || "Something went wrong.");
-        }
+        if (active) setError(err.message || "Could not load orders.");
       } finally {
         if (active) setLoading(false);
       }
@@ -54,14 +52,7 @@ export default function OrdersPage() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <Link
-        href="/admin"
-        style={{
-          color: "#e87528",
-          textDecoration: "none",
-          fontWeight: 700,
-        }}
-      >
+      <Link href="/admin" style={{ color: "#e87528", fontWeight: 700 }}>
         ← Back to Admin Dashboard
       </Link>
 
@@ -69,7 +60,7 @@ export default function OrdersPage() {
 
       <section
         style={{
-          background: "#ffffff",
+          background: "#fff",
           border: "1px solid #e3e8f0",
           borderRadius: "12px",
           padding: "20px",
@@ -80,9 +71,7 @@ export default function OrdersPage() {
         {loading && <p>Loading orders...</p>}
 
         {!loading && error && (
-          <p role="alert" style={{ color: "#b42318" }}>
-            {error}
-          </p>
+          <p role="alert" style={{ color: "#b42318" }}>{error}</p>
         )}
 
         {!loading && !error && orders.length === 0 && (
@@ -93,13 +82,7 @@ export default function OrdersPage() {
           <>
             <p>Total orders loaded: {orders.length}</p>
 
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                textAlign: "left",
-              }}
-            >
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
                   {["Order Code", "Order ID", "User ID"].map((heading) => (
@@ -107,8 +90,8 @@ export default function OrdersPage() {
                       key={heading}
                       style={{
                         padding: "12px",
+                        textAlign: "left",
                         borderBottom: "1px solid #e3e8f0",
-                        background: "#f5f7fb",
                       }}
                     >
                       {heading}
@@ -116,19 +99,12 @@ export default function OrdersPage() {
                   ))}
                 </tr>
               </thead>
-
               <tbody>
                 {orders.map((order) => (
                   <tr key={order.id}>
-                    <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>
-                      {order.order_code || "—"}
-                    </td>
-                    <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>
-                      {order.id || "—"}
-                    </td>
-                    <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>
-                      {order.user_id || "—"}
-                    </td>
+                    <td style={{ padding: "12px" }}>{order.order_code || "—"}</td>
+                    <td style={{ padding: "12px" }}>{order.id || "—"}</td>
+                    <td style={{ padding: "12px" }}>{order.user_id || "—"}</td>
                   </tr>
                 ))}
               </tbody>
