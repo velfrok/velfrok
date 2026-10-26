@@ -13,6 +13,25 @@ function fail(message, status = 400) {
 
 export async function POST(request) {
   try {
+    const ip = clientIp(request);
+
+    try {
+      await rateLimit(`admin-login:${ip}`, 10, 60);
+    } catch (error) {
+      if (error instanceof Response && error.status === 429) {
+        return NextResponse.json(
+          { error: "Too many login attempts. Please try again later." },
+          { status: 429 }
+        );
+      }
+
+      console.error("Admin login rate limit check failed.");
+      return NextResponse.json(
+        { error: "Login service temporarily unavailable. Please try again later." },
+        { status: 503 }
+      );
+    }
+    
     const body = await request.json();
     const email = String(body.email || "").trim().toLowerCase();
     const password = body.password;
