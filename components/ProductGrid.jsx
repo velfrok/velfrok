@@ -84,7 +84,7 @@ export default function ProductGrid({ products = [] }) {
                       overflowWrap: "anywhere",
                     }}
                   >
-                    <strong>Image failed to load.</strong>
+                    <strong>VELFROK DIAGNOSTIC TEST 726</strong>
                     <p>Product: {product.name || "Unnamed product"}</p>
                     <p>Image URL: {imageUrl}</p>
                   </div>
