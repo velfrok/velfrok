@@ -12,7 +12,7 @@ const nextConfig = {
         { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
         { key: "X-DNS-Prefetch-Control", value: "on" },
         { key: "Content-Security-Policy",
-          value: "default-src 'self'; img-src 'self' data: https://*.supabase.co; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://*.hcaptcha.com https://*.supabase.co; frame-src https://*.hcaptcha.com; connect-src 'self' https://*.supabase.co https://*.upstash.io;" },
+          value: "default-src 'self'; img-src 'self' data: https://*.supabase.co https://placehold.co; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://*.hcaptcha.com https://*.supabase.co; frame-src https://*.hcaptcha.com; connect-src 'self' https://*.supabase.co https://*.upstash.io;" },
       ],
     }];
   },
