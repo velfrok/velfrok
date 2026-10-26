@@ -2,15 +2,33 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
 function fail(message, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
-
 export async function POST(request) {
   try {
+    const ip = clientIp(request);
+
+    try {
+      await rateLimit(`admin-otp-verify:${ip}`, 10, 60);
+    } catch (error) {
+      if (error instanceof Response && error.status === 429) {
+        return NextResponse.json(
+          { error: "Too many verification requests. Please try again later." },
+          { status: 429 }
+        );
+      }
+
+      console.error("Admin OTP rate limit check failed.");
+      return NextResponse.json(
+        { error: "Verification service temporarily unavailable. Please try again later." },
+        { status: 503 }
+      );
+    }
     const body = await request.json();
     const email = String(body.email || "").trim().toLowerCase();
     const otp = String(body.otp || "").trim();
