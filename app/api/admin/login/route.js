@@ -2,6 +2,8 @@
 import { createHmac, randomInt } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
+
 
 export const runtime = "nodejs";
 
