@@ -180,3 +180,163 @@ export async function POST(request) {
     );
   }
 }
+export async function PATCH(request) {
+  try {
+    const auth = await checkAdmin(request);
+
+    if (auth.error) {
+      return auth.error;
+    }
+
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid request data." },
+        { status: 400 }
+      );
+    }
+
+    const id = String(body.id || "").trim();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: "Product ID is required." },
+        { status: 400 }
+      );
+    }
+
+    const allowedFields = [
+      "sku",
+      "name",
+      "slug",
+      "description",
+      "price_inr",
+      "stock",
+      "image_url",
+      "category",
+      "is_active",
+    ];
+
+    const updates = {};
+
+    for (const field of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(body, field)) {
+        updates[field] = body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json(
+        { error: "No product changes were provided." },
+        { status: 400 }
+      );
+    }
+
+    for (const field of ["sku", "name", "slug"]) {
+      if (field in updates) {
+        if (
+          typeof updates[field] !== "string" ||
+          !updates[field].trim()
+        ) {
+          return NextResponse.json(
+            { error: `${field} cannot be empty.` },
+            { status: 400 }
+          );
+        }
+
+        updates[field] = updates[field].trim();
+      }
+    }
+
+    for (const field of ["description", "image_url", "category"]) {
+      if (field in updates) {
+        if (typeof updates[field] !== "string") {
+          return NextResponse.json(
+            { error: `${field} must be text.` },
+            { status: 400 }
+          );
+        }
+
+        updates[field] = updates[field].trim() || null;
+      }
+    }
+
+    for (const field of ["price_inr", "stock"]) {
+      if (field in updates) {
+        const value = updates[field];
+
+        if (
+          value === "" ||
+          value === null ||
+          typeof value === "boolean" ||
+          !Number.isSafeInteger(Number(value)) ||
+          Number(value) < 0
+        ) {
+          return NextResponse.json(
+            { error: `${field} must be a non-negative whole number.` },
+            { status: 400 }
+          );
+        }
+
+        updates[field] = Number(value);
+      }
+    }
+
+    if (
+      "is_active" in updates &&
+      typeof updates.is_active !== "boolean"
+    ) {
+      return NextResponse.json(
+        { error: "is_active must be true or false." },
+        { status: 400 }
+      );
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await auth.client
+      .from("products")
+      .update(updates)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Admin product update failed.");
+
+      if (error.code === "23505") {
+        return NextResponse.json(
+          { error: "That SKU or slug is already used by another product." },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json(
+        { error: "Unable to update product." },
+        { status: 500 }
+      );
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: "Product not found." },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      message: "Product updated successfully.",
+      product: data,
+    });
+  } catch {
+    console.error("Unexpected admin product update error.");
+
+    return NextResponse.json(
+      { error: "Unable to update the product right now." },
+      { status: 500 }
+    );
+  }
+}
