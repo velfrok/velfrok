@@ -4,23 +4,26 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
+const emptyForm = {
+  sku: "",
+  name: "",
+  slug: "",
+  price_inr: "",
+  stock: "",
+  description: "",
+  image_url: "",
+  category: "",
+  is_active: false,
+};
+
 export default function AdminProductsPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-
-  const [form, setForm] = useState({
-    sku: "",
-    name: "",
-    slug: "",
-    price_inr: "",
-    stock: "",
-    description: "",
-    image_url: "",
-    category: "",
-    is_active: false,
-  });
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyForm);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -60,48 +63,86 @@ export default function AdminProductsPage() {
     }));
   }
 
-  async function addProduct(event) {
+  function startEdit(product) {
+    setEditingId(product.id);
+    setMessage("");
+    setError("");
+
+    setForm({
+      sku: product.sku || "",
+      name: product.name || "",
+      slug: product.slug || "",
+      price_inr: String(product.price_inr ?? ""),
+      stock: String(product.stock ?? ""),
+      description: product.description || "",
+      image_url: product.image_url || "",
+      category: product.category || "",
+      is_active: product.is_active === true,
+    });
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm({ ...emptyForm });
+    setError("");
+    setMessage("");
+  }
+
+  async function saveProduct(event) {
     event.preventDefault();
     setError("");
     setMessage("");
+    setSaving(true);
 
     try {
+      const isEditing = editingId !== null;
+
+      const payload = {
+        ...form,
+        price_inr: Number(form.price_inr),
+        stock: Number(form.stock),
+      };
+
+      if (isEditing) {
+        payload.id = editingId;
+      }
+
       const response = await fetch("/api/admin/products", {
-        method: "POST",
+        method: isEditing ? "PATCH" : "POST",
         credentials: "same-origin",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ...form,
-          price_inr: Number(form.price_inr),
-          stock: Number(form.stock),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || "Unable to add product.");
+        throw new Error(
+          result.error ||
+            (isEditing
+              ? "Unable to update product."
+              : "Unable to add product.")
+        );
       }
 
-      setMessage("Product added successfully.");
+      setMessage(
+        isEditing
+          ? "Product updated successfully."
+          : "Product added successfully."
+      );
 
-      setForm({
-        sku: "",
-        name: "",
-        slug: "",
-        price_inr: "",
-        stock: "",
-        description: "",
-        image_url: "",
-        category: "",
-        is_active: false,
-      });
+      setEditingId(null);
+      setForm({ ...emptyForm });
 
       await loadProducts();
     } catch (err) {
-      setError(err.message || "Unable to add product.");
+      setError(err.message || "Unable to save product.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -148,7 +189,7 @@ export default function AdminProductsPage() {
         <h1 style={{ marginTop: "24px" }}>Products</h1>
 
         <p style={{ color: "#68738a", lineHeight: 1.6 }}>
-          View existing products and add new products to your VELFROK store.
+          Add products and manage your existing VELFROK listings.
         </p>
 
         {error && (
@@ -190,9 +231,18 @@ export default function AdminProductsPage() {
             borderRadius: "16px",
           }}
         >
-          <h2 style={{ marginTop: 0 }}>Add a product</h2>
+          <h2 style={{ marginTop: 0 }}>
+            {editingId ? "Edit product" : "Add a product"}
+          </h2>
 
-          <form onSubmit={addProduct}>
+          {editingId && (
+            <p style={{ color: "#68738a", lineHeight: 1.5 }}>
+              You are editing an existing product. Its ID will remain
+              unchanged.
+            </p>
+          )}
+
+          <form onSubmit={saveProduct}>
             <div
               style={{
                 display: "grid",
@@ -213,7 +263,9 @@ export default function AdminProductsPage() {
               </div>
 
               <div>
-                <label style={labelStyle} htmlFor="name">Product name *</label>
+                <label style={labelStyle} htmlFor="name">
+                  Product name *
+                </label>
                 <input
                   id="name"
                   name="name"
@@ -233,7 +285,6 @@ export default function AdminProductsPage() {
                   onChange={updateField}
                   style={inputStyle}
                   required
-                  placeholder="example-product"
                 />
               </div>
 
@@ -255,7 +306,9 @@ export default function AdminProductsPage() {
               </div>
 
               <div>
-                <label style={labelStyle} htmlFor="stock">Stock quantity *</label>
+                <label style={labelStyle} htmlFor="stock">
+                  Stock quantity *
+                </label>
                 <input
                   id="stock"
                   name="stock"
@@ -324,21 +377,53 @@ export default function AdminProductsPage() {
               Make this product active and visible in the store
             </label>
 
-            <button
-              type="submit"
+            <div
               style={{
+                display: "flex",
+                gap: "10px",
+                flexWrap: "wrap",
                 marginTop: "20px",
-                padding: "12px 20px",
-                background: "#e87528",
-                color: "#fff",
-                border: 0,
-                borderRadius: "8px",
-                fontWeight: 700,
-                cursor: "pointer",
               }}
             >
-              Add Product
-            </button>
+              <button
+                type="submit"
+                disabled={saving}
+                style={{
+                  padding: "12px 20px",
+                  background: saving ? "#9ca3af" : "#e87528",
+                  color: "#fff",
+                  border: 0,
+                  borderRadius: "8px",
+                  fontWeight: 700,
+                  cursor: saving ? "wait" : "pointer",
+                }}
+              >
+                {saving
+                  ? "Saving..."
+                  : editingId
+                    ? "Update Product"
+                    : "Add Product"}
+              </button>
+
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  disabled={saving}
+                  style={{
+                    padding: "12px 20px",
+                    background: "#fff",
+                    color: "#172033",
+                    border: "1px solid #d7deea",
+                    borderRadius: "8px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
@@ -365,6 +450,7 @@ export default function AdminProductsPage() {
             <button
               type="button"
               onClick={loadProducts}
+              disabled={loading || saving}
               style={{
                 padding: "9px 14px",
                 border: "1px solid #d7deea",
@@ -387,13 +473,13 @@ export default function AdminProductsPage() {
                 style={{
                   width: "100%",
                   borderCollapse: "collapse",
-                  minWidth: "650px",
+                  minWidth: "720px",
                   fontSize: "14px",
                 }}
               >
                 <thead>
                   <tr style={{ background: "#172033", color: "#fff" }}>
-                    {["SKU", "Product", "Price", "Stock", "Status"].map(
+                    {["SKU", "Product", "Price", "Stock", "Status", "Action"].map(
                       (heading) => (
                         <th
                           key={heading}
@@ -416,14 +502,38 @@ export default function AdminProductsPage() {
                       key={product.id}
                       style={{ borderBottom: "1px solid #e3e8f0" }}
                     >
-                      <td style={{ padding: "12px" }}>{product.sku || "—"}</td>
-                      <td style={{ padding: "12px" }}>{product.name || "—"}</td>
                       <td style={{ padding: "12px" }}>
+                        {product.sku || "—"}
+                      </td>
+                      <td style={{ padding: "12px" }}>
+                        {product.name || "—"}
+                      </td>
+                      <td style={{ padding: "12px", whiteSpace: "nowrap" }}>
                         ₹{Number(product.price_inr || 0).toLocaleString("en-IN")}
                       </td>
-                      <td style={{ padding: "12px" }}>{product.stock ?? 0}</td>
+                      <td style={{ padding: "12px" }}>
+                        {product.stock ?? 0}
+                      </td>
                       <td style={{ padding: "12px" }}>
                         {product.is_active ? "Active" : "Inactive"}
+                      </td>
+                      <td style={{ padding: "12px" }}>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(product)}
+                          disabled={saving}
+                          style={{
+                            padding: "8px 12px",
+                            background: "#172033",
+                            color: "#fff",
+                            border: 0,
+                            borderRadius: "6px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
                       </td>
                     </tr>
                   ))}
