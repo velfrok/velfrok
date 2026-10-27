@@ -151,7 +151,6 @@ export async function PATCH(request) {
       return fail("Order not found.", 404);
     }
 
-    // Never reverse a paid order to failed: stock has already been deducted.
     if (
       paymentStatus === "failed" &&
       existingOrder.payment_status === "paid"
@@ -159,8 +158,6 @@ export async function PATCH(request) {
       return fail("A paid order cannot be marked as failed.", 409);
     }
 
-    // The database function performs stock deduction and payment updates
-    // atomically, and locks the order to prevent duplicate deductions.
     if (paymentStatus === "paid") {
       const { error: rpcError } = await auth.client.rpc(
         "mark_order_paid_and_decrement_stock",
@@ -168,17 +165,17 @@ export async function PATCH(request) {
       );
 
       if (rpcError) {
-        console.error("Atomic order payment and stock update failed.");
+        console.error(
+          "Atomic order payment and stock update failed."
+        );
+
         return fail(
-          "Unable to mark the order as paid. Check product stock and order items, then retry.",
+          "Payment approval was rejected. Confirm that a UTR was submitted and verify the payment in your bank or UPI account. Also check product stock and order items before retrying.",
           409
         );
       }
     }
 
-    // Apply ordinary order-status changes separately. If this fails after
-    // payment succeeds, retrying is safe because the database function
-    // recognizes an order that is already paid.
     const patch = {};
 
     if (paymentStatus === "failed") {
@@ -197,6 +194,7 @@ export async function PATCH(request) {
 
       if (updateError) {
         console.error("Admin order status update failed.");
+
         return fail(
           "Payment processing may have succeeded, but the order status update failed. Reload the order before retrying.",
           500
@@ -206,8 +204,12 @@ export async function PATCH(request) {
 
     await auditLog(auth.user.email, "order.update", {
       id,
-      ...(paymentStatus !== undefined ? { payment_status: paymentStatus } : {}),
-      ...(orderStatus !== undefined ? { status: orderStatus } : {}),
+      ...(paymentStatus !== undefined
+        ? { payment_status: paymentStatus }
+        : {}),
+      ...(orderStatus !== undefined
+        ? { status: orderStatus }
+        : {}),
     });
 
     return NextResponse.json({ ok: true });
