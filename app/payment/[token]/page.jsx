@@ -10,325 +10,325 @@ const UPI_ID = process.env.NEXT_PUBLIC_UPI_ID || "";
 const UPI_NAME = process.env.NEXT_PUBLIC_UPI_NAME || "VELFROK";
 
 export default function PaymentPage() {
-  const params = useParams();
-  const token = String(params?.token || "");
-  const { cart, clear } = useContext(CartContext);
+const params = useParams();
+const token = String(params?.token || "");
+const { cart, clear, hydrated } = useContext(CartContext);
 
-  const [status, setStatus] = useState("loading");
-  const [amount, setAmount] = useState(null);
-  const [utr, setUtr] = useState("");
-  const [captcha, setCaptcha] = useState("");
-  const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
-  const [secs, setSecs] = useState(1200);
-  const [submitting, setSubmitting] = useState(false);
+const [status, setStatus] = useState("loading");
+const [amount, setAmount] = useState(null);
+const [utr, setUtr] = useState("");
+const [captcha, setCaptcha] = useState("");
+const [msg, setMsg] = useState("");
+const [err, setErr] = useState("");
+const [secs, setSecs] = useState(1200);
+const [submitting, setSubmitting] = useState(false);
 
-  // Clear the cart only after the server confirms payment as paid.
-  // Preserve any cart that differs from the items used for this order.
-  useEffect(() => {
-    if (!token || status !== "paid") return;
+// Only clear after server-confirmed payment and cart hydration.
+// Never clear a cart that differs from the order snapshot.
+useEffect(() => {
+if (!token || status !== "paid" || !hydrated) return;
 
-    const storageKey = `velfrok-pending-cart-${token}`;
+const storageKey = `velfrok-pending-cart-${token}`;
 
-    try {
-      const saved = localStorage.getItem(storageKey);
+try {
+  const saved = localStorage.getItem(storageKey);
 
-      // No snapshot means we cannot safely identify this order's cart.
-      if (!saved) return;
+  // Keep the cart untouched if there is no valid snapshot.
+  if (!saved) return;
 
-      const expectedItems = JSON.parse(saved);
+  const expectedItems = JSON.parse(saved);
 
-      if (!Array.isArray(expectedItems)) return;
+  if (!Array.isArray(expectedItems)) return;
 
-      const normalize = (items) =>
-        items
-          .map((item) => ({
-            sku: String(item.sku || ""),
-            qty: Number(item.qty),
-          }))
-          .sort((a, b) => a.sku.localeCompare(b.sku));
+  const normalize = (items) =>
+    items
+      .map((item) => ({
+        sku: String(item.sku || ""),
+        qty: Number(item.qty),
+      }))
+      .sort((a, b) => a.sku.localeCompare(b.sku));
 
-      const expected = normalize(expectedItems);
-      const current = normalize(cart);
+  const expected = normalize(expectedItems);
+  const current = normalize(cart);
 
-      const sameCart =
-        expected.length > 0 &&
-        current.length === expected.length &&
-        expected.every(
-          (item, index) =>
-            item.sku === current[index].sku &&
-            item.qty === current[index].qty
-        );
+  const sameCart =
+    expected.length > 0 &&
+    current.length === expected.length &&
+    expected.every(
+      (item, index) =>
+        item.sku === current[index].sku &&
+        item.qty === current[index].qty
+    );
 
-      if (sameCart) {
-        clear();
-      }
+  if (sameCart) {
+    clear();
+  }
 
-      // Remove the snapshot after safely processing this paid session.
-      localStorage.removeItem(storageKey);
-    } catch (error) {
-      // If anything goes wrong, preserve the cart.
-      console.error("Could not process paid cart snapshot:", error);
-    }
-  }, [status, token, cart, clear]);
+  // The order is paid, but a different cart must be preserved.
+  // Remove only this order's snapshot after checking it.
+  localStorage.removeItem(storageKey);
+} catch (error) {
+  // If the check fails, preserve the cart.
+  console.error("Could not process paid cart snapshot:", error);
+}
 
-  useEffect(() => {
-    if (!token) return;
+}, [status, token, hydrated, cart, clear]);
 
-    let alive = true;
-    let timer;
+useEffect(() => {
+if (!token) return;
 
-    const poll = async () => {
-      try {
-        const response = await fetch(
-          `/api/payment/status?token=${encodeURIComponent(token)}`,
-          { cache: "no-store" }
-        );
+let alive = true;
+let timer;
 
-        const data = await response.json();
+const poll = async () => {
+  try {
+    const response = await fetch(
+      `/api/payment/status?token=${encodeURIComponent(token)}`,
+      { cache: "no-store" }
+    );
 
-        if (!alive) return;
+    const data = await response.json();
 
-        if (!response.ok) {
-          setStatus(data.status || "error");
-          setErr(data.error || "Unable to load payment details.");
-          return;
-        }
+    if (!alive) return;
 
-        setStatus(data.status);
-
-        if (
-          typeof data.amount === "number" &&
-          Number.isFinite(data.amount)
-        ) {
-          setAmount(data.amount);
-        }
-
-        if (data.status === "paid") {
-          setMsg("Payment confirmed. Thank you!");
-        }
-
-        if (
-          data.status === "expired" ||
-          data.status === "abandoned"
-        ) {
-          setErr(
-            "This payment link has expired. Please contact support."
-          );
-        }
-      } catch {
-        if (alive) {
-          setErr("Connection problem while checking payment status.");
-        }
-      }
-    };
-
-    poll();
-    timer = setInterval(poll, 3000);
-
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (
-      status === "paid" ||
-      status === "expired" ||
-      status === "abandoned"
-    ) {
+    if (!response.ok) {
+      setStatus(data.status || "error");
+      setErr(data.error || "Unable to load payment details.");
       return;
     }
 
-    const timer = setInterval(
-      () => setSecs((old) => Math.max(0, old - 1)),
-      1000
-    );
+    setStatus(data.status);
 
-    return () => clearInterval(timer);
-  }, [status]);
+    if (
+      typeof data.amount === "number" &&
+      Number.isFinite(data.amount)
+    ) {
+      setAmount(data.amount);
+    }
 
-  const upiLink =
-    UPI_ID && amount !== null
-      ? `upi://pay?${new URLSearchParams({
-          pa: UPI_ID,
-          pn: UPI_NAME,
-          am: String(amount),
-          cu: "INR",
-          tn: `Velfrok ${token.slice(0, 8)}`,
-        }).toString()}`
-      : "";
+    if (data.status === "paid") {
+      setMsg("Payment confirmed. Thank you!");
+    }
 
-  async function submitUtr(event) {
-    event.preventDefault();
-    setErr("");
-    setMsg("");
-    setSubmitting(true);
-
-    try {
-      const {
-        data: { session },
-      } = await supabaseBrowser().auth.getSession();
-
-      if (!session) {
-        setErr(
-          "Please sign in with the account used to place this order."
-        );
-        return;
-      }
-
-      const response = await fetch("/api/payment/submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ token, utr, captcha }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setErr(
-          data.error || "Payment reference could not be submitted."
-        );
-      } else {
-        setMsg(
-          data.message ||
-            "Payment reference submitted for verification."
-        );
-      }
-    } catch {
-      setErr("Network error. Please try again.");
-    } finally {
-      setSubmitting(false);
+    if (
+      data.status === "expired" ||
+      data.status === "abandoned"
+    ) {
+      setErr(
+        "This payment link has expired. Please contact support."
+      );
+    }
+  } catch {
+    if (alive) {
+      setErr("Connection problem while checking payment status.");
     }
   }
+};
 
-  return (
-    <section className="payment-wrap">
-      <div className="payment-card">
-        <p className="eyebrow">SECURE PAYMENT</p>
+poll();
+timer = setInterval(poll, 3000);
 
-        <h1>
-          Complete your payment<span>.</span>
-        </h1>
+return () => {
+  alive = false;
+  clearInterval(timer);
+};
 
-        {amount === null ? (
-          <p className="payment-amount">Loading order total…</p>
-        ) : (
-          <p className="payment-amount">
-            ₹
-            {amount.toLocaleString("en-IN", {
-              maximumFractionDigits: 2,
-            })}
-          </p>
-        )}
+}, [token]);
 
-        {secs > 0 &&
-        !["paid", "expired", "abandoned"].includes(status) ? (
-          <p className="muted">
-            Time remaining: {Math.floor(secs / 60)}:
-            {String(secs % 60).padStart(2, "0")}
-          </p>
-        ) : (
-          status !== "paid" && (
-            <p className="form-error">
-              This payment session may have expired. Refresh status
-              before paying.
-            </p>
-          )
-        )}
+useEffect(() => {
+if (
+status === "paid" ||
+status === "expired" ||
+status === "abandoned"
+) {
+return;
+}
 
-        {upiLink && (
-          <a className="button button-dark button-full" href={upiLink}>
-            Open UPI app to pay
-          </a>
-        )}
+const timer = setInterval(
+  () => setSecs((old) => Math.max(0, old - 1)),
+  1000
+);
 
-        {upiLink && (
-          <img
-            className="payment-qr"
-            src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiLink)}`}
-            alt="UPI payment QR code"
-            width="240"
-            height="240"
-          />
-        )}
+return () => clearInterval(timer);
 
-        {UPI_ID && (
-          <p className="muted">
-            UPI ID: <strong>{UPI_ID}</strong>
-          </p>
-        )}
+}, [status]);
 
-        <p className="muted small-copy">
-          Payment reference: {token.slice(0, 8).toUpperCase()}
+const upiLink =
+UPI_ID && amount !== null
+? "upi://pay?${new URLSearchParams({ pa: UPI_ID, pn: UPI_NAME, am: String(amount), cu: "INR", tn: "Velfrok ${token.slice(0, 8)}", }).toString()}"
+: "";
+
+async function submitUtr(event) {
+event.preventDefault();
+setErr("");
+setMsg("");
+setSubmitting(true);
+
+try {
+  const {
+    data: { session },
+  } = await supabaseBrowser().auth.getSession();
+
+  if (!session) {
+    setErr(
+      "Please sign in with the account used to place this order."
+    );
+    return;
+  }
+
+  const response = await fetch("/api/payment/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ token, utr, captcha }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    setErr(
+      data.error || "Payment reference could not be submitted."
+    );
+  } else {
+    setMsg(
+      data.message ||
+        "Payment reference submitted for verification."
+    );
+  }
+} catch {
+  setErr("Network error. Please try again.");
+} finally {
+  setSubmitting(false);
+}
+
+}
+
+return (
+<section className="payment-wrap">
+<div className="payment-card">
+<p className="eyebrow">SECURE PAYMENT</p>
+
+    <h1>
+      Complete your payment<span>.</span>
+    </h1>
+
+    {amount === null ? (
+      <p className="payment-amount">Loading order total…</p>
+    ) : (
+      <p className="payment-amount">
+        ₹
+        {amount.toLocaleString("en-IN", {
+          maximumFractionDigits: 2,
+        })}
+      </p>
+    )}
+
+    {secs > 0 &&
+    !["paid", "expired", "abandoned"].includes(status) ? (
+      <p className="muted">
+        Time remaining: {Math.floor(secs / 60)}:
+        {String(secs % 60).padStart(2, "0")}
+      </p>
+    ) : (
+      status !== "paid" && (
+        <p className="form-error">
+          This payment session may have expired. Refresh status
+          before paying.
         </p>
+      )
+    )}
 
-        {status === "utr_submitted" && (
-          <p className="notice">
-            Your payment reference was received and is awaiting
-            verification.
-          </p>
-        )}
+    {upiLink && (
+      <a className="button button-dark button-full" href={upiLink}>
+        Open UPI app to pay
+      </a>
+    )}
 
-        {status === "paid" && (
-          <p className="notice success-notice">
-            {msg || "Payment confirmed."}
-          </p>
-        )}
+    {upiLink && (
+      <img
+        className="payment-qr"
+        src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiLink)}`}
+        alt="UPI payment QR code"
+        width="240"
+        height="240"
+      />
+    )}
 
-        {status === "opened" && (
-          <form className="utr-form" onSubmit={submitUtr}>
-            <label>
-              UPI transaction reference (UTR)
-              <input
-                value={utr}
-                onChange={(event) => setUtr(event.target.value)}
-                required
-                minLength={6}
-                maxLength={40}
-                autoComplete="off"
-              />
-            </label>
+    {UPI_ID && (
+      <p className="muted">
+        UPI ID: <strong>{UPI_ID}</strong>
+      </p>
+    )}
 
-            <HCaptcha
-              sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITEKEY || ""}
-              onVerify={setCaptcha}
-              onExpire={() => setCaptcha("")}
-            />
+    <p className="muted small-copy">
+      Payment reference: {token.slice(0, 8).toUpperCase()}
+    </p>
 
-            <button
-              className="button button-dark button-full"
-              type="submit"
-              disabled={!captcha || !utr.trim() || submitting}
-            >
-              {submitting
-                ? "Submitting…"
-                : "Submit payment reference"}
-            </button>
-          </form>
-        )}
+    {status === "utr_submitted" && (
+      <p className="notice">
+        Your payment reference was received and is awaiting
+        verification.
+      </p>
+    )}
 
-        {msg && status !== "paid" && (
-          <p className="notice">{msg}</p>
-        )}
+    {status === "paid" && (
+      <p className="notice success-notice">
+        {msg || "Payment confirmed."}
+      </p>
+    )}
 
-        {err && (
-          <p className="form-error" role="alert">
-            {err}
-          </p>
-        )}
+    {status === "opened" && (
+      <form className="utr-form" onSubmit={submitUtr}>
+        <label>
+          UPI transaction reference (UTR)
+          <input
+            value={utr}
+            onChange={(event) => setUtr(event.target.value)}
+            required
+            minLength={6}
+            maxLength={40}
+            autoComplete="off"
+          />
+        </label>
 
-        {!UPI_ID && (
-          <p className="form-error">
-            Payment configuration is incomplete. Please contact the
-            store administrator.
-          </p>
-        )}
-      </div>
-    </section>
-  );
+        <HCaptcha
+          sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITEKEY || ""}
+          onVerify={setCaptcha}
+          onExpire={() => setCaptcha("")}
+        />
+
+        <button
+          className="button button-dark button-full"
+          type="submit"
+          disabled={!captcha || !utr.trim() || submitting}
+        >
+          {submitting
+            ? "Submitting…"
+            : "Submit payment reference"}
+        </button>
+      </form>
+    )}
+
+    {msg && status !== "paid" && (
+      <p className="notice">{msg}</p>
+    )}
+
+    {err && (
+      <p className="form-error" role="alert">
+        {err}
+      </p>
+    )}
+
+    {!UPI_ID && (
+      <p className="form-error">
+        Payment configuration is incomplete. Please contact the
+        store administrator.
+      </p>
+    )}
+  </div>
+</section>
+
+);
 }
