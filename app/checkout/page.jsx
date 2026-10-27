@@ -83,7 +83,6 @@ export default function Checkout() {
         return;
       }
 
-      clear();
       router.push(`/payment/${json.token}`);
     } catch (error) {
       console.error("Checkout error:", error);
