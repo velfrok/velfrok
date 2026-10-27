@@ -23,8 +23,8 @@ const [err, setErr] = useState("");
 const [secs, setSecs] = useState(1200);
 const [submitting, setSubmitting] = useState(false);
 
-// Only clear after server-confirmed payment and cart hydration.
-// Never clear a cart that differs from the order snapshot.
+// Clear the cart only after server-confirmed payment,
+// hydration, and an exact SKU/quantity match.
 useEffect(() => {
 if (!token || status !== "paid" || !hydrated) return;
 
@@ -32,19 +32,16 @@ const storageKey = `velfrok-pending-cart-${token}`;
 
 try {
   const saved = localStorage.getItem(storageKey);
-
-  // Keep the cart untouched if there is no valid snapshot.
   if (!saved) return;
 
   const expectedItems = JSON.parse(saved);
-
   if (!Array.isArray(expectedItems)) return;
 
   const normalize = (items) =>
     items
       .map((item) => ({
-        sku: String(item.sku || ""),
-        qty: Number(item.qty),
+        sku: String(item?.sku || ""),
+        qty: Number(item?.qty),
       }))
       .sort((a, b) => a.sku.localeCompare(b.sku));
 
@@ -56,29 +53,27 @@ try {
     current.length === expected.length &&
     expected.every(
       (item, index) =>
+        item.sku !== "" &&
         item.sku === current[index].sku &&
         item.qty === current[index].qty
     );
 
   if (sameCart) {
     clear();
+    localStorage.removeItem(storageKey);
   }
-
-  // The order is paid, but a different cart must be preserved.
-  // Remove only this order's snapshot after checking it.
-  localStorage.removeItem(storageKey);
 } catch (error) {
-  // If the check fails, preserve the cart.
-  console.error("Could not process paid cart snapshot:", error);
+  // Preserve the cart and snapshot if verification fails.
+  console.error("Could not verify paid cart:", error);
 }
 
 }, [status, token, hydrated, cart, clear]);
 
+// Poll the server for payment status.
 useEffect(() => {
 if (!token) return;
 
 let alive = true;
-let timer;
 
 const poll = async () => {
   try {
@@ -92,7 +87,6 @@ const poll = async () => {
     if (!alive) return;
 
     if (!response.ok) {
-      setStatus(data.status || "error");
       setErr(data.error || "Unable to load payment details.");
       return;
     }
@@ -108,9 +102,8 @@ const poll = async () => {
 
     if (data.status === "paid") {
       setMsg("Payment confirmed. Thank you!");
-    }
-
-    if (
+      setErr("");
+    } else if (
       data.status === "expired" ||
       data.status === "abandoned"
     ) {
@@ -126,7 +119,7 @@ const poll = async () => {
 };
 
 poll();
-timer = setInterval(poll, 3000);
+const timer = setInterval(poll, 3000);
 
 return () => {
   alive = false;
@@ -135,6 +128,7 @@ return () => {
 
 }, [token]);
 
+// Countdown display.
 useEffect(() => {
 if (
 status === "paid" ||
@@ -144,15 +138,15 @@ status === "abandoned"
 return;
 }
 
-const timer = setInterval(
-  () => setSecs((old) => Math.max(0, old - 1)),
-  1000
-);
+const timer = setInterval(() => {
+  setSecs((old) => Math.max(0, old - 1));
+}, 1000);
 
 return () => clearInterval(timer);
 
 }, [status]);
 
+// Correctly construct the UPI deep link.
 const upiLink =
 UPI_ID && amount !== null
 ? "upi://pay?${new URLSearchParams({ pa: UPI_ID, pn: UPI_NAME, am: String(amount), cu: "INR", tn: "Velfrok ${token.slice(0, 8)}", }).toString()}"
@@ -182,7 +176,7 @@ try {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ token, utr, captcha }),
+    body: JSON.stringify({ token, utr: utr.trim(), captcha }),
   });
 
   const data = await response.json();
@@ -234,8 +228,8 @@ return (
     ) : (
       status !== "paid" && (
         <p className="form-error">
-          This payment session may have expired. Refresh status
-          before paying.
+          This payment session may have expired. Check the
+          payment status before attempting another payment.
         </p>
       )
     )}
@@ -304,9 +298,7 @@ return (
           type="submit"
           disabled={!captcha || !utr.trim() || submitting}
         >
-          {submitting
-            ? "Submitting…"
-            : "Submit payment reference"}
+          {submitting ? "Submitting…" : "Submit payment reference"}
         </button>
       </form>
     )}
