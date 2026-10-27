@@ -15,9 +15,7 @@ async function checkAdminCookie(request) {
   const token = request.cookies.get("sb-access-token")?.value;
 
   if (!token) {
-    return {
-      error: fail("Please sign in again.", 401),
-    };
+    return { error: fail("Please sign in again.", 401) };
   }
 
   const client = supabaseAdmin();
@@ -29,10 +27,7 @@ async function checkAdminCookie(request) {
 
   if (authError || !user) {
     return {
-      error: fail(
-        "Your session is invalid. Please sign in again.",
-        401
-      ),
+      error: fail("Your session is invalid. Please sign in again.", 401),
     };
   }
 
@@ -43,14 +38,11 @@ async function checkAdminCookie(request) {
     .maybeSingle();
 
   if (adminError || !admin) {
-    return {
-      error: fail("Administrator access required.", 403),
-    };
+    return { error: fail("Administrator access required.", 403) };
   }
 
   return { user, client };
 }
-
 
 async function rateLimitSafe(request, user) {
   try {
@@ -59,7 +51,6 @@ async function rateLimitSafe(request, user) {
       10,
       60
     );
-
     return null;
   } catch (error) {
     if (error instanceof Response && error.status === 429) {
@@ -75,14 +66,10 @@ async function rateLimitSafe(request, user) {
   }
 }
 
-
 export async function GET(request) {
   try {
     const auth = await checkAdminCookie(request);
-
-    if (auth.error) {
-      return auth.error;
-    }
+    if (auth.error) return auth.error;
 
     const { data, error } = await auth.client
       .from("orders")
@@ -92,14 +79,12 @@ export async function GET(request) {
 
     if (error) {
       console.error("Admin orders lookup failed.");
-
       return fail("Unable to load orders.", 500);
     }
 
     return NextResponse.json({ orders: data || [] });
   } catch {
     console.error("Unexpected admin orders lookup error.");
-
     return fail("Unable to load orders right now.", 500);
   }
 }
@@ -107,16 +92,10 @@ export async function GET(request) {
 export async function PATCH(request) {
   try {
     const auth = await checkAdminCookie(request);
-
-    if (auth.error) {
-      return auth.error;
-    }
+    if (auth.error) return auth.error;
 
     const limitError = await rateLimitSafe(request, auth.user);
-
-    if (limitError) {
-      return limitError;
-    }
+    if (limitError) return limitError;
 
     let body;
 
@@ -133,42 +112,35 @@ export async function PATCH(request) {
       return fail("Bad order ID.", 400);
     }
 
-    const patch = {};
-
-    if (paymentStatus !== undefined) {
-      if (!["paid", "failed"].includes(paymentStatus)) {
-        return fail("Invalid payment status.", 400);
-      }
-
-      patch.payment_status = paymentStatus;
+    if (
+      paymentStatus !== undefined &&
+      !["paid", "failed"].includes(paymentStatus)
+    ) {
+      return fail("Invalid payment status.", 400);
     }
 
-    if (orderStatus !== undefined) {
-      if (
-        ![
-          "placed",
-          "packed",
-          "dispatched",
-          "delivered",
-          "cancelled",
-        ].includes(orderStatus)
-      ) {
-        return fail("Invalid order status.", 400);
-      }
-
-      patch.status = orderStatus;
+    if (
+      orderStatus !== undefined &&
+      ![
+        "placed",
+        "packed",
+        "dispatched",
+        "delivered",
+        "cancelled",
+      ].includes(orderStatus)
+    ) {
+      return fail("Invalid order status.", 400);
     }
 
-    if (!Object.keys(patch).length) {
+    if (paymentStatus === undefined && orderStatus === undefined) {
       return fail("Nothing to update.", 400);
     }
 
-    const { data: existingOrder, error: findError } =
-      await auth.client
-        .from("orders")
-        .select("id, items, payment_status")
-        .eq("id", id)
-        .maybeSingle();
+    const { data: existingOrder, error: findError } = await auth.client
+      .from("orders")
+      .select("id, payment_status")
+      .eq("id", id)
+      .maybeSingle();
 
     if (findError) {
       console.error("Admin order lookup failed.");
@@ -179,80 +151,68 @@ export async function PATCH(request) {
       return fail("Order not found.", 404);
     }
 
-    const { error: updateError } = await auth.client
-      .from("orders")
-      .update(patch)
-      .eq("id", id);
-
-    if (updateError) {
-      console.error("Admin order update failed.");
-      return fail("Unable to update the order.", 500);
+    // Never reverse a paid order to failed: stock has already been deducted.
+    if (
+      paymentStatus === "failed" &&
+      existingOrder.payment_status === "paid"
+    ) {
+      return fail("A paid order cannot be marked as failed.", 409);
     }
 
-    if (
-      patch.payment_status === "paid" &&
-      existingOrder.payment_status !== "paid"
-    ) {
-      const { error: paymentError } = await auth.client
-        .from("payment_intents")
-        .update({ status: "paid" })
-        .eq("order_id", id);
+    // The database function performs stock deduction and payment updates
+    // atomically, and locks the order to prevent duplicate deductions.
+    if (paymentStatus === "paid") {
+      const { error: rpcError } = await auth.client.rpc(
+        "mark_order_paid_and_decrement_stock",
+        { p_order_id: id }
+      );
 
-      if (paymentError) {
-        console.error("Payment intent update failed.");
+      if (rpcError) {
+        console.error("Atomic order payment and stock update failed.");
         return fail(
-          "Order updated, but payment status synchronization failed.",
-          500
+          "Unable to mark the order as paid. Check product stock and order items, then retry.",
+          409
         );
       }
+    }
 
-      // Stock is decremented only when transitioning to paid.
-      // This assumes the database RPC is designed to be atomic.
-      const items = Array.isArray(existingOrder.items)
-        ? existingOrder.items
-        : [];
+    // Apply ordinary order-status changes separately. If this fails after
+    // payment succeeds, retrying is safe because the database function
+    // recognizes an order that is already paid.
+    const patch = {};
 
-      for (const item of items) {
-        if (
-          !item ||
-          typeof item.sku !== "string" ||
-          !Number.isSafeInteger(item.qty) ||
-          item.qty <= 0
-        ) {
-          console.error("Invalid order item encountered.");
-          return fail(
-            "Order updated, but stock synchronization needs review.",
-            500
-          );
-        }
+    if (paymentStatus === "failed") {
+      patch.payment_status = "failed";
+    }
 
-        const { error: stockError } = await auth.client.rpc(
-          "decrement_stock",
-          {
-            p_sku: item.sku,
-            p_qty: item.qty,
-          }
+    if (orderStatus !== undefined) {
+      patch.status = orderStatus;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      const { error: updateError } = await auth.client
+        .from("orders")
+        .update(patch)
+        .eq("id", id);
+
+      if (updateError) {
+        console.error("Admin order status update failed.");
+        return fail(
+          "Payment processing may have succeeded, but the order status update failed. Reload the order before retrying.",
+          500
         );
-
-        if (stockError) {
-          console.error("Stock decrement failed.");
-          return fail(
-            "Order updated, but stock synchronization failed.",
-            500
-          );
-        }
       }
     }
 
     await auditLog(auth.user.email, "order.update", {
       id,
-      ...patch,
+      ...(paymentStatus !== undefined ? { payment_status: paymentStatus } : {}),
+      ...(orderStatus !== undefined ? { status: orderStatus } : {}),
     });
 
     return NextResponse.json({ ok: true });
   } catch {
     console.error("Unexpected admin order update error.");
-
     return fail("Unable to update the order right now.", 500);
   }
 }
