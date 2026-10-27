@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useContext, useState } from "react";
@@ -7,7 +6,7 @@ import { CartContext } from "@/context/CartContext";
 import { supabaseBrowser } from "@/lib/supabase";
 
 export default function Checkout() {
-  const { cart, clear, subtotal, setQuantity, remove } =
+  const { cart, subtotal, setQuantity, remove } =
     useContext(CartContext);
 
   const router = useRouter();
@@ -23,12 +22,10 @@ export default function Checkout() {
       return;
     }
 
-    // Capture form values before awaiting the authentication session.
     const form = Object.fromEntries(
       new FormData(event.currentTarget)
     );
 
-    // Snapshot the current cart for this order request.
     const orderItems = cart.map((item) => ({
       sku: item.sku,
       qty: Number(item.qty),
@@ -83,6 +80,20 @@ export default function Checkout() {
         return;
       }
 
+      // Save which cart belongs to this payment session.
+      // Keep the cart itself until payment is confirmed as paid.
+      try {
+        localStorage.setItem(
+          `velfrok-pending-cart-${json.token}`,
+          JSON.stringify(orderItems)
+        );
+      } catch (storageError) {
+        console.error(
+          "Could not save payment cart snapshot:",
+          storageError
+        );
+      }
+
       router.push(`/payment/${json.token}`);
     } catch (error) {
       console.error("Checkout error:", error);
@@ -100,7 +111,7 @@ export default function Checkout() {
         </h1>
 
         <div className="notice">
-          Your bag is empty.{" "}
+          Your bag{" "}is empty.{" "}
           <a href="/#shop">Browse products</a> to add items.
         </div>
       </section>
