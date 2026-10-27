@@ -23,8 +23,7 @@ const [err, setErr] = useState("");
 const [secs, setSecs] = useState(1200);
 const [submitting, setSubmitting] = useState(false);
 
-// Clear the cart only after server-confirmed payment,
-// hydration, and an exact SKU/quantity match.
+// Clear the cart only after confirmed payment and hydration.
 useEffect(() => {
 if (!token || status !== "paid" || !hydrated) return;
 
@@ -63,19 +62,18 @@ try {
     localStorage.removeItem(storageKey);
   }
 } catch (error) {
-  // Preserve the cart and snapshot if verification fails.
   console.error("Could not verify paid cart:", error);
 }
 
 }, [status, token, hydrated, cart, clear]);
 
-// Poll the server for payment status.
+// Poll the server for the current payment status.
 useEffect(() => {
 if (!token) return;
 
 let alive = true;
 
-const poll = async () => {
+async function poll() {
   try {
     const response = await fetch(
       `/api/payment/status?token=${encodeURIComponent(token)}`,
@@ -116,7 +114,7 @@ const poll = async () => {
       setErr("Connection problem while checking payment status.");
     }
   }
-};
+}
 
 poll();
 const timer = setInterval(poll, 3000);
@@ -146,7 +144,7 @@ return () => clearInterval(timer);
 
 }, [status]);
 
-// Correctly construct the UPI deep link.
+// IMPORTANT: Use backticks for this template literal.
 const upiLink =
 UPI_ID && amount !== null
 ? "upi://pay?${new URLSearchParams({ pa: UPI_ID, pn: UPI_NAME, am: String(amount), cu: "INR", tn: "Velfrok ${token.slice(0, 8)}", }).toString()}"
@@ -176,7 +174,11 @@ try {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ token, utr: utr.trim(), captcha }),
+    body: JSON.stringify({
+      token,
+      utr: utr.trim(),
+      captcha,
+    }),
   });
 
   const data = await response.json();
