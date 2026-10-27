@@ -146,9 +146,15 @@ return () => clearInterval(timer);
 
 // Correctly construct the UPI deep link using template literals.
 const upiLink =
-UPI_ID && amount !== null
-? "upi://pay?${new URLSearchParams({ pa: UPI_ID, pn: UPI_NAME, am: String(amount), cu: "INR", tn: "Velfrok ${token.slice(0, 8)}", }).toString()}"
-: "";
+    UPI_ID && amount !== null
+      ? `upi://pay?${new URLSearchParams({
+          pa: UPI_ID,
+          pn: UPI_NAME,
+          am: String(amount),
+          cu: "INR",
+          tn: `Velfrok ${token.slice(0, 8)}`,
+        }).toString()}`
+      : "";
 
 async function submitUtr(event) {
 event.preventDefault();
