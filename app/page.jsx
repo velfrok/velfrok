@@ -119,7 +119,7 @@ export default async function Home() {
           </p>
         )}
 
-                <ProductGrid products={products} />
+         <ProductGrid products={products} />
       </section>
     </>
   );
