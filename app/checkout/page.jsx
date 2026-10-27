@@ -7,7 +7,9 @@ import { CartContext } from "@/context/CartContext";
 import { supabaseBrowser } from "@/lib/supabase";
 
 export default function Checkout() {
-  const { cart, clear, subtotal } = useContext(CartContext);
+  const { cart, clear, subtotal, setQuantity, remove } =
+    useContext(CartContext);
+
   const router = useRouter();
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -21,9 +23,16 @@ export default function Checkout() {
       return;
     }
 
-    // FIX: Capture form values before any asynchronous operation.
-    const formElement = event.currentTarget;
-    const form = Object.fromEntries(new FormData(formElement));
+    // Capture form values before awaiting the authentication session.
+    const form = Object.fromEntries(
+      new FormData(event.currentTarget)
+    );
+
+    // Snapshot the current cart for this order request.
+    const orderItems = cart.map((item) => ({
+      sku: item.sku,
+      qty: Number(item.qty),
+    }));
 
     setBusy(true);
 
@@ -47,10 +56,7 @@ export default function Checkout() {
         },
         body: JSON.stringify({
           ...form,
-          items: cart.map((item) => ({
-            sku: item.sku,
-            qty: item.qty,
-          })),
+          items: orderItems,
           coupon:
             typeof window !== "undefined"
               ? sessionStorage.getItem("coupon")
@@ -71,7 +77,7 @@ export default function Checkout() {
 
       if (!json.token) {
         setErr(
-          "Your order response is incomplete. Please contact support before trying again."
+          "The payment session could not be created. Please contact support."
         );
         setBusy(false);
         return;
@@ -91,11 +97,12 @@ export default function Checkout() {
       <section className="simple-page">
         <p className="eyebrow">CHECKOUT</p>
         <h1>
-          Almost there<span>.</span>
+          Your bag<span>.</span>
         </h1>
+
         <div className="notice">
-          Your bag is empty. <a href="/#shop">Browse products</a> before
-          checkout.
+          Your bag is empty.{" "}
+          <a href="/#shop">Browse products</a> to add items.
         </div>
       </section>
     );
@@ -186,7 +193,7 @@ export default function Checkout() {
 
           <button
             className="button button-dark button-full"
-            disabled={busy}
+            disabled={busy || !cart.length}
             type="submit"
           >
             {busy
@@ -195,28 +202,90 @@ export default function Checkout() {
           </button>
 
           <p className="muted small-copy">
-            Prices and stock are checked again by the server when you place
-            the order.
+            Prices and stock are checked again by the server when
+            you place your order.
           </p>
         </form>
 
         <aside className="order-summary">
           <h2>Your order</h2>
 
-          {cart.map((item) => (
-            <div className="summary-line" key={item.sku}>
-              <span>
-                {item.name} × {item.qty}
-              </span>
-              <strong>
-                ₹
-                {(
-                  Number(item.price_inr || 0) *
-                  Number(item.qty || 0)
-                ).toLocaleString("en-IN")}
-              </strong>
-            </div>
-          ))}
+          <div className="checkout-items">
+            {cart.map((item) => {
+              const quantity = Number(item.qty || 1);
+              const stockLimit = Math.min(
+                10,
+                Math.max(1, Number(item.stock || 1))
+              );
+
+              return (
+                <article
+                  className="checkout-item"
+                  key={item.sku}
+                >
+                  <div className="checkout-item-info">
+                    <strong>{item.name}</strong>
+                    <p>
+                      ₹
+                      {Number(
+                        item.price_inr || 0
+                      ).toLocaleString("en-IN")}
+                    </p>
+                  </div>
+
+                  <div
+                    className="checkout-quantity"
+                    aria-label={`Quantity controls for ${item.name}`}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Decrease ${item.name} quantity`}
+                      disabled={busy || quantity <= 1}
+                      onClick={() => {
+                        setQuantity(item.sku, quantity - 1);
+                        setErr("");
+                      }}
+                    >
+                      −
+                    </button>
+
+                    <span aria-live="polite">{quantity}</span>
+
+                    <button
+                      type="button"
+                      aria-label={`Increase ${item.name} quantity`}
+                      disabled={busy || quantity >= stockLimit}
+                      onClick={() => {
+                        setQuantity(item.sku, quantity + 1);
+                        setErr("");
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <strong className="checkout-item-total">
+                    ₹
+                    {(
+                      Number(item.price_inr || 0) * quantity
+                    ).toLocaleString("en-IN")}
+                  </strong>
+
+                  <button
+                    className="text-button checkout-remove"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      remove(item.sku);
+                      setErr("");
+                    }}
+                  >
+                    Remove
+                  </button>
+                </article>
+              );
+            })}
+          </div>
 
           <div className="summary-line summary-total">
             <span>Estimated subtotal</span>
@@ -227,8 +296,100 @@ export default function Checkout() {
               })}
             </strong>
           </div>
+
+          <p className="muted small-copy">
+            Change quantities or remove items before placing
+            your order. Final prices and stock are verified
+            by the server.
+          </p>
         </aside>
       </div>
+
+      <style jsx>{`
+        .checkout-items {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          margin: 16px 0;
+        }
+
+        .checkout-item {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #e5e5e5;
+        }
+
+        .checkout-item-info {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .checkout-item-info strong {
+          display: block;
+        }
+
+        .checkout-item-info p {
+          margin: 5px 0 0;
+        }
+
+        .checkout-quantity {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+        }
+
+        .checkout-quantity button {
+          width: 34px;
+          height: 34px;
+          border: 1px solid #d1d5db;
+          border-radius: 8px;
+          background: #fff;
+          color: #111827;
+          font-size: 21px;
+          cursor: pointer;
+        }
+
+        .checkout-quantity button:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .checkout-quantity span {
+          min-width: 18px;
+          text-align: center;
+          font-weight: 600;
+        }
+
+        .checkout-item-total {
+          grid-column: 1 / -1;
+          text-align: right;
+        }
+
+        .checkout-remove {
+          grid-column: 1 / -1;
+          justify-self: start;
+          color: #b42318;
+        }
+
+        @media (max-width: 480px) {
+          .checkout-item {
+            gap: 8px;
+          }
+
+          .checkout-quantity {
+            gap: 7px;
+          }
+
+          .checkout-quantity button {
+            width: 32px;
+            height: 32px;
+          }
+        }
+      `}</style>
     </section>
   );
 }
