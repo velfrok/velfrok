@@ -20,6 +20,30 @@ export default async function Home() {
 
   return (
     <>
+      <>
+      <nav
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          padding: "12px 20px",
+          borderBottom: "1px solid #eeeeee",
+        }}
+      >
+        <a
+          href="/login"
+          style={{
+            color: "#111827",
+            textDecoration: "none",
+            fontWeight: 600,
+            padding: "10px 16px",
+            border: "1px solid #111827",
+            borderRadius: "8px",
+          }}
+        >
+           Login
+        </a>
+      </nav>
+
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">THE EVERYDAY EDIT</p>
