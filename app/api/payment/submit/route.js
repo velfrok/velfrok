@@ -56,8 +56,7 @@ export async function POST(req) {
 
     if (
       typeof token !== "string" ||
-      token.length > 100 ||
-      !token.trim()
+      !/^[0-9a-f-]{36}$/i.test(token)
     ) {
       return Response.json(
         { error: "Invalid or expired payment page" },
@@ -85,19 +84,13 @@ export async function POST(req) {
 
     const { data: payment, error: lookupError } = await db
       .from("payment_intents")
-      .select(
-        "id,token,user_id,order_id,status,expires_at,utr"
-      )
+      .select("token,user_id,order_id,status,expires_at")
       .eq("token", token)
       .eq("user_id", user.id)
       .maybeSingle();
 
     if (lookupError) {
-      console.error(
-        "Payment intent lookup failed:",
-        lookupError.message
-      );
-
+      console.error("Payment intent lookup failed.");
       return Response.json(
         { error: "Unable to verify payment session" },
         { status: 500 }
@@ -111,36 +104,33 @@ export async function POST(req) {
       );
     }
 
-    if (
-      payment.expires_at &&
-      isExpired(payment)
-    ) {
+    if (payment.expires_at && isExpired(payment)) {
       return Response.json(
-        { error: "This payment page has expired. Please contact support." },
+        {
+          error:
+            "This payment page has expired. Please contact support.",
+        },
         { status: 400 }
       );
     }
 
-    // Do not mark an order as paid here.
-    // An administrator must verify the UTR first.
-    const { data: updatedPayment, error: paymentError } = await db
-      .from("payment_intents")
-      .update({
-        status: "utr_submitted",
-        utr: transactionId,
-      })
-      .eq("id", payment.id)
-      .eq("user_id", user.id)
-      .eq("status", "opened")
-      .select("id")
-      .maybeSingle();
+    // Record the UTR without declaring the payment paid.
+    // The status condition prevents a second submission.
+    const { data: updatedPayment, error: paymentError } =
+      await db
+        .from("payment_intents")
+        .update({
+          status: "utr_submitted",
+          utr: transactionId,
+        })
+        .eq("token", payment.token)
+        .eq("user_id", user.id)
+        .eq("status", "opened")
+        .select("token")
+        .maybeSingle();
 
     if (paymentError) {
-      console.error(
-        "Payment submission update failed:",
-        paymentError.message
-      );
-
+      console.error("Payment submission update failed.");
       return Response.json(
         { error: "Unable to submit payment details. Please try again." },
         { status: 500 }
@@ -149,31 +139,32 @@ export async function POST(req) {
 
     if (!updatedPayment) {
       return Response.json(
-        { error: "This payment has already been submitted. Refresh the page." },
+        {
+          error:
+            "This payment has already been submitted. Refresh the page.",
+        },
         { status: 409 }
       );
     }
 
-    const { error: orderError } = await db
+    const { data: updatedOrder, error: orderError } = await db
       .from("orders")
       .update({
         payment_status: "pending_verification",
       })
       .eq("id", payment.order_id)
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .eq("payment_status", "awaiting_payment")
+      .select("id")
+      .maybeSingle();
 
-    if (orderError) {
-      console.error(
-        "Order payment status update failed:",
-        orderError.message
-      );
-
-      // The payment submission is already saved.
-      // Report the partial failure instead of claiming full success.
+    if (orderError || !updatedOrder) {
+      // The UTR may already be saved. Do not claim full success.
+      console.error("Order payment status update failed.");
       return Response.json(
         {
           error:
-            "Your UTR was recorded, but the order status could not be updated. Please contact support and do not submit it again.",
+            "Your UTR may have been recorded, but the order status could not be updated. Please contact support and do not submit it again.",
         },
         { status: 500 }
       );
@@ -186,10 +177,7 @@ export async function POST(req) {
   } catch (error) {
     if (error instanceof Response) return error;
 
-    console.error(
-      "Payment submission failed:",
-      error?.message || "Unknown error"
-    );
+    console.error("Payment submission failed.");
 
     return Response.json(
       { error: "Server error while submitting payment" },
