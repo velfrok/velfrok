@@ -3,14 +3,20 @@
 
 import { useContext } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { CartContext } from "@/context/CartContext";
 
 export default function FloatingBuyNow() {
   const { count, hydrated } = useContext(CartContext);
+  const pathname = usePathname();
 
-  // Do not show the button until the saved cart has loaded.
-  // Hide it automatically when the cart becomes empty.
-  if (!hydrated || count < 1) {
+  // Show this button only on customer-facing pages.
+  if (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    !hydrated ||
+    count < 1
+  ) {
     return null;
   }
 
@@ -50,11 +56,11 @@ export default function FloatingBuyNow() {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          minWidth: "25px",
-          height: "25px",
-          padding: "0 6px",
-          borderRadius: "50%",
-          background: "#b5cc78",
+          minWidth: "24px",
+          height: "24px",
+          padding: "0 5px",
+          borderRadius: "999px",
+          background: "#ffffff",
           color: "#20211e",
           fontSize: "12px",
           fontWeight: 800,
