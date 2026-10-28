@@ -51,6 +51,7 @@ async function rateLimitSafe(request, user) {
       10,
       60
     );
+
     return null;
   } catch (error) {
     if (error instanceof Response && error.status === 429) {
@@ -136,9 +137,17 @@ export async function PATCH(request) {
       return fail("Nothing to update.", 400);
     }
 
+    // Payment verification and order transitions must be separate actions.
+    if (paymentStatus !== undefined && orderStatus !== undefined) {
+      return fail(
+        "Update payment status and order status in separate requests.",
+        400
+      );
+    }
+
     const { data: existingOrder, error: findError } = await auth.client
       .from("orders")
-      .select("id, payment_status")
+      .select("id, payment_status, status")
       .eq("id", id)
       .maybeSingle();
 
@@ -151,6 +160,7 @@ export async function PATCH(request) {
       return fail("Order not found.", 404);
     }
 
+    // Payment failure cannot overwrite a successful payment.
     if (
       paymentStatus === "failed" &&
       existingOrder.payment_status === "paid"
@@ -158,7 +168,16 @@ export async function PATCH(request) {
       return fail("A paid order cannot be marked as failed.", 409);
     }
 
+    // Approve payment only after independent bank/UPI verification.
+    // The database function also requires a valid submitted UTR
+    // and checks stock before marking the order paid.
     if (paymentStatus === "paid") {
+      if (
+        existingOrder.payment_status === "paid"
+      ) {
+        return fail("This order is already marked as paid.", 409);
+      }
+
       const { error: rpcError } = await auth.client.rpc(
         "mark_order_paid_and_decrement_stock",
         { p_order_id: id }
@@ -170,7 +189,37 @@ export async function PATCH(request) {
         );
 
         return fail(
-          "Payment approval was rejected. Confirm that a UTR was submitted and verify the payment in your bank or UPI account. Also check product stock and order items before retrying.",
+          "Payment approval was rejected. Verify the payment in your bank or UPI account, confirm a UTR was submitted, and check product stock and order items before retrying.",
+          409
+        );
+      }
+    }
+
+    // Only allow the agreed order-status transitions.
+    if (orderStatus !== undefined) {
+      const allowedTransitions = {
+        placed: ["packed", "cancelled"],
+        packed: ["dispatched", "cancelled"],
+        dispatched: ["delivered"],
+        delivered: [],
+        cancelled: [],
+      };
+
+      if (
+        !allowedTransitions[existingOrder.status]?.includes(orderStatus)
+      ) {
+        return fail(
+          `Cannot change order status from "${existingOrder.status}" to "${orderStatus}".`,
+          409
+        );
+      }
+
+      if (
+        orderStatus === "packed" &&
+        existingOrder.payment_status !== "paid"
+      ) {
+        return fail(
+          "Only a paid order can be accepted and packed.",
           409
         );
       }
@@ -196,7 +245,7 @@ export async function PATCH(request) {
         console.error("Admin order status update failed.");
 
         return fail(
-          "Payment processing may have succeeded, but the order status update failed. Reload the order before retrying.",
+          "The update failed. Reload the order and verify its current status before retrying.",
           500
         );
       }
