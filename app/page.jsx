@@ -1,5 +1,6 @@
 
 import ProductGrid from "@/components/ProductGrid";
+import CustomerAccountNav from "@/components/CustomerAccountNav";
 import { supabaseBrowser } from "@/lib/supabase";
 
 export const revalidate = 60;
@@ -23,34 +24,15 @@ export default async function Home() {
 
   return (
     <>
-      {/* Customer Login Link */}
-      <nav
-        aria-label="Account navigation"
+      {/* Customer account navigation */}
+      <div
         style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          padding: "12px 20px",
           borderBottom: "1px solid #eeeeee",
           background: "#ffffff",
         }}
       >
-        <a
-          href="/login"
-          style={{
-            display: "inline-block",
-            color: "#111827",
-            textDecoration: "none",
-            fontWeight: 600,
-            padding: "10px 20px",
-            border: "1px solid #111827",
-            borderRadius: "8px",
-            fontSize: "14px",
-          }}
-        >
-          Login
-        </a>
-      </nav>
+        <CustomerAccountNav />
+      </div>
 
       {/* Homepage Hero */}
       <section className="hero">
@@ -119,7 +101,7 @@ export default async function Home() {
           </p>
         )}
 
-         <ProductGrid products={products} />
+        <ProductGrid products={products} />
       </section>
     </>
   );
