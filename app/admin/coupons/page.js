@@ -1,6 +1,8 @@
+
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 export default function CouponsPage() {
   const [couponCode, setCouponCode] = useState("");
@@ -11,7 +13,7 @@ export default function CouponsPage() {
     event.preventDefault();
 
     setMessage(
-      "This is a preview only. No coupon has been saved because database and API support have not been verified."
+      "Preview only. No coupon has been saved. Real coupon saving will be enabled after API verification."
     );
   }
 
@@ -25,12 +27,25 @@ export default function CouponsPage() {
         color: "#1f2937",
       }}
     >
+      <Link
+        href="/admin"
+        style={{
+          display: "inline-block",
+          marginBottom: "20px",
+          color: "#e87528",
+          fontWeight: 700,
+          textDecoration: "none",
+        }}
+      >
+        ← Back to Admin Dashboard
+      </Link>
+
       <h1 style={{ fontSize: "28px", marginBottom: "8px" }}>
         Coupons Management
       </h1>
 
       <p style={{ color: "#6b7280", marginBottom: "24px" }}>
-        Coupon management dashboard preview.
+        Manage discount coupons for your store.
       </p>
 
       <section
@@ -57,9 +72,12 @@ export default function CouponsPage() {
           <input
             id="couponCode"
             value={couponCode}
-            onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+            onChange={(event) =>
+              setCouponCode(event.target.value.toUpperCase())
+            }
             placeholder="e.g. SAVE10"
             required
+            maxLength={40}
             style={{
               width: "100%",
               boxSizing: "border-box",
@@ -82,6 +100,7 @@ export default function CouponsPage() {
             type="number"
             min="1"
             max="100"
+            step="1"
             value={discount}
             onChange={(event) => setDiscount(event.target.value)}
             required
@@ -136,10 +155,9 @@ export default function CouponsPage() {
           lineHeight: 1.6,
         }}
       >
-        <strong>Important:</strong> This page is only a UI preview. It does not
-        create, save, activate, or apply real coupons. We must verify the
-        existing database schema and coupon API before implementing those
-        functions.
+        <strong>Important:</strong> This page is currently a UI preview. It
+        does not create, save, activate, or apply real coupons. The existing
+        database and API must be tested before real coupon management is enabled.
       </section>
     </main>
   );
