@@ -5,68 +5,131 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-function json(body, status = 200, session = null) {
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  path: "/",
+};
+
+const TEMP_COOKIE_NAMES = [
+  "admin-otp-session",
+  "admin-otp-refresh-session",
+];
+
+function send(body, status = 200, session = null) {
   const response = NextResponse.json(body, { status });
 
-  if (session?.clearCookies) {
-    const options = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-    };
-
-    response.cookies.set("sb-access-token", "", options);
-    response.cookies.set("sb-refresh-token", "", options);
-    response.cookies.set("admin-otp-session", "", {
-      ...options,
-      sameSite: "strict",
-    });
-    response.cookies.set("admin-otp-refresh-session", "", {
-      ...options,
-      sameSite: "strict",
-    });
-  } else if (session?.setCookies) {
+  if (session?.setCookies) {
     session.setCookies(response);
+  }
+
+  if (session?.clearCookies === true) {
+    response.cookies.set("sb-access-token", "", {
+      ...COOKIE_OPTIONS,
+      maxAge: 0,
+    });
+    response.cookies.set("sb-refresh-token", "", {
+      ...COOKIE_OPTIONS,
+      maxAge: 0,
+    });
+
+    for (const name of TEMP_COOKIE_NAMES) {
+      response.cookies.set(name, "", {
+        ...COOKIE_OPTIONS,
+        sameSite: "strict",
+        maxAge: 0,
+      });
+    }
   }
 
   return response;
 }
 
+function fail(message, status, session) {
+  return send({ error: message }, status, session);
+}
+
 async function authenticate(request) {
+  let session;
+
   try {
-    const session = await getAdminSession(request);
+    session = await getAdminSession(request);
+  } catch {
+    console.error("[admin-products] Session verification failed.");
 
-    if (!session.user) {
-      return {
-        error: json(
-          { error: "Please sign in again." },
-          401,
-          session
-        ),
-      };
-    }
+    return {
+      error: send(
+        { error: "Unable to verify administrator access." },
+        503
+      ),
+    };
+  }
 
+  if (!session?.user) {
+    console.warn(
+      "[admin-products] Request rejected: no valid admin session."
+    );
+
+    return {
+      error: fail("Please sign in again.", 401, session),
+    };
+  }
+
+  try {
     return {
       user: session.user,
       session,
       client: supabaseAdmin(),
     };
   } catch {
-    console.error("Admin products authentication check failed.");
+    console.error(
+      "[admin-products] Admin database client unavailable."
+    );
 
     return {
-      error: NextResponse.json(
-        { error: "Unable to verify administrator access." },
-        { status: 503 }
+      error: fail(
+        "The product service is temporarily unavailable.",
+        503,
+        session
       ),
     };
   }
 }
 
-function fail(message, status, session) {
-  return json({ error: message }, status, session);
+async function readJson(request) {
+  try {
+    const body = await request.json();
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return { error: "Invalid request data." };
+    }
+
+    return { body };
+  } catch {
+    return { error: "Invalid request data." };
+  }
+}
+
+function nonNegativeInteger(value) {
+  if (
+    value === "" ||
+    value === null ||
+    value === undefined ||
+    typeof value === "boolean"
+  ) {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isSafeInteger(number) && number >= 0
+    ? number
+    : null;
+}
+
+function duplicateError(error) {
+  return error?.code === "23505";
 }
 
 export async function GET(request) {
@@ -80,18 +143,23 @@ export async function GET(request) {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Admin products lookup failed.");
+      console.error(
+        "[admin-products] Product query failed:",
+        error.code || "unknown"
+      );
 
       return fail("Unable to load products.", 500, auth.session);
     }
 
-    return json(
+    return send(
       { products: data || [] },
       200,
       auth.session
     );
   } catch {
-    console.error("Unexpected admin products lookup error.");
+    console.error(
+      "[admin-products] Unexpected product query failure."
+    );
 
     return fail(
       "Unable to load products right now.",
@@ -105,28 +173,35 @@ export async function POST(request) {
   const auth = await authenticate(request);
   if (auth.error) return auth.error;
 
+  const parsed = await readJson(request);
+  if (parsed.error) {
+    return fail(parsed.error, 400, auth.session);
+  }
+
   try {
-    let body;
+    const body = parsed.body;
 
-    try {
-      body = await request.json();
-    } catch {
-      return fail("Invalid request data.", 400, auth.session);
-    }
+    const sku =
+      typeof body.sku === "string" ? body.sku.trim() : "";
+    const name =
+      typeof body.name === "string" ? body.name.trim() : "";
+    const slug =
+      typeof body.slug === "string" ? body.slug.trim() : "";
+    const description =
+      typeof body.description === "string"
+        ? body.description.trim()
+        : "";
+    const imageUrl =
+      typeof body.image_url === "string"
+        ? body.image_url.trim()
+        : "";
+    const category =
+      typeof body.category === "string"
+        ? body.category.trim()
+        : "";
 
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return fail("Invalid request data.", 400, auth.session);
-    }
-
-    const sku = String(body.sku || "").trim();
-    const name = String(body.name || "").trim();
-    const slug = String(body.slug || "").trim();
-    const description = String(body.description || "").trim();
-    const imageUrl = String(body.image_url || "").trim();
-    const category = String(body.category || "").trim();
-
-    const priceInr = Number(body.price_inr);
-    const stock = Number(body.stock);
+    const priceInr = nonNegativeInteger(body.price_inr);
+    const stock = nonNegativeInteger(body.stock);
 
     if (!sku || !name || !slug) {
       return fail(
@@ -136,18 +211,20 @@ export async function POST(request) {
       );
     }
 
+    if (priceInr === null || stock === null) {
+      return fail(
+        "Price and stock must be non-negative whole numbers.",
+        400,
+        auth.session
+      );
+    }
+
     if (
-      body.price_inr === "" ||
-      body.price_inr === null ||
-      body.stock === "" ||
-      body.stock === null ||
-      !Number.isSafeInteger(priceInr) ||
-      priceInr < 0 ||
-      !Number.isSafeInteger(stock) ||
-      stock < 0
+      body.is_active !== undefined &&
+      typeof body.is_active !== "boolean"
     ) {
       return fail(
-        "Price and stock must be valid non-negative whole numbers.",
+        "is_active must be true or false.",
         400,
         auth.session
       );
@@ -172,15 +249,18 @@ export async function POST(request) {
       .single();
 
     if (error) {
-      console.error("Admin product creation failed.");
-
-      if (error.code === "23505") {
+      if (duplicateError(error)) {
         return fail(
           "This SKU or slug already exists. Use a different one.",
           409,
           auth.session
         );
       }
+
+      console.error(
+        "[admin-products] Product insert failed:",
+        error.code || "unknown"
+      );
 
       return fail(
         "Unable to create product. Check the product fields and database columns.",
@@ -189,7 +269,7 @@ export async function POST(request) {
       );
     }
 
-    return json(
+    return send(
       {
         message: "Product created successfully.",
         product: data,
@@ -198,7 +278,9 @@ export async function POST(request) {
       auth.session
     );
   } catch {
-    console.error("Unexpected admin product creation error.");
+    console.error(
+      "[admin-products] Unexpected product creation failure."
+    );
 
     return fail(
       "Unable to create the product right now.",
@@ -212,20 +294,15 @@ export async function PATCH(request) {
   const auth = await authenticate(request);
   if (auth.error) return auth.error;
 
+  const parsed = await readJson(request);
+  if (parsed.error) {
+    return fail(parsed.error, 400, auth.session);
+  }
+
   try {
-    let body;
-
-    try {
-      body = await request.json();
-    } catch {
-      return fail("Invalid request data.", 400, auth.session);
-    }
-
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return fail("Invalid request data.", 400, auth.session);
-    }
-
-    const id = String(body.id || "").trim();
+    const body = parsed.body;
+    const id =
+      typeof body.id === "string" ? body.id.trim() : "";
 
     if (!id) {
       return fail("Product ID is required.", 400, auth.session);
@@ -266,7 +343,7 @@ export async function PATCH(request) {
           !updates[field].trim()
         ) {
           return fail(
-            `${field} cannot be empty.`,
+            \`\${field} cannot be empty.\`,
             400,
             auth.session
           );
@@ -278,37 +355,37 @@ export async function PATCH(request) {
 
     for (const field of ["description", "image_url", "category"]) {
       if (field in updates) {
-        if (typeof updates[field] !== "string") {
+        if (
+          updates[field] !== null &&
+          typeof updates[field] !== "string"
+        ) {
           return fail(
-            `${field} must be text.`,
+            \`\${field} must be text or null.\`,
             400,
             auth.session
           );
         }
 
-        updates[field] = updates[field].trim() || null;
+        updates[field] =
+          typeof updates[field] === "string"
+            ? updates[field].trim() || null
+            : null;
       }
     }
 
     for (const field of ["price_inr", "stock"]) {
       if (field in updates) {
-        const value = updates[field];
+        const value = nonNegativeInteger(updates[field]);
 
-        if (
-          value === "" ||
-          value === null ||
-          typeof value === "boolean" ||
-          !Number.isSafeInteger(Number(value)) ||
-          Number(value) < 0
-        ) {
+        if (value === null) {
           return fail(
-            `${field} must be a non-negative whole number.`,
+            \`\${field} must be a non-negative whole number.\`,
             400,
             auth.session
           );
         }
 
-        updates[field] = Number(value);
+        updates[field] = value;
       }
     }
 
@@ -333,15 +410,18 @@ export async function PATCH(request) {
       .maybeSingle();
 
     if (error) {
-      console.error("Admin product update failed.");
-
-      if (error.code === "23505") {
+      if (duplicateError(error)) {
         return fail(
           "That SKU or slug is already used by another product.",
           409,
           auth.session
         );
       }
+
+      console.error(
+        "[admin-products] Product update failed:",
+        error.code || "unknown"
+      );
 
       return fail("Unable to update product.", 500, auth.session);
     }
@@ -350,7 +430,7 @@ export async function PATCH(request) {
       return fail("Product not found.", 404, auth.session);
     }
 
-    return json(
+    return send(
       {
         message: "Product updated successfully.",
         product: data,
@@ -359,7 +439,9 @@ export async function PATCH(request) {
       auth.session
     );
   } catch {
-    console.error("Unexpected admin product update error.");
+    console.error(
+      "[admin-products] Unexpected product update failure."
+    );
 
     return fail(
       "Unable to update the product right now.",
@@ -373,16 +455,16 @@ export async function DELETE(request) {
   const auth = await authenticate(request);
   if (auth.error) return auth.error;
 
+  const parsed = await readJson(request);
+  if (parsed.error) {
+    return fail(parsed.error, 400, auth.session);
+  }
+
   try {
-    let body;
-
-    try {
-      body = await request.json();
-    } catch {
-      return fail("Invalid request data.", 400, auth.session);
-    }
-
-    const id = String(body?.id || "").trim();
+    const id =
+      typeof parsed.body.id === "string"
+        ? parsed.body.id.trim()
+        : "";
 
     if (!id) {
       return fail("Product ID is required.", 400, auth.session);
@@ -396,7 +478,10 @@ export async function DELETE(request) {
       .maybeSingle();
 
     if (error) {
-      console.error("Admin product deletion failed.");
+      console.error(
+        "[admin-products] Product deletion failed:",
+        error.code || "unknown"
+      );
 
       return fail("Unable to delete product.", 500, auth.session);
     }
@@ -405,13 +490,18 @@ export async function DELETE(request) {
       return fail("Product not found.", 404, auth.session);
     }
 
-    return json(
-      { message: "Product deleted successfully.", id: data.id },
+    return send(
+      {
+        message: "Product deleted successfully.",
+        id: data.id,
+      },
       200,
       auth.session
     );
   } catch {
-    console.error("Unexpected admin product deletion error.");
+    console.error(
+      "[admin-products] Unexpected product deletion failure."
+    );
 
     return fail(
       "Unable to delete the product right now.",
