@@ -2,6 +2,8 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req) {
   try {
     await rateLimit(`pstat:${clientIp(req)}`, 60, 60);
