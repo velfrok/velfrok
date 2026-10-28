@@ -38,9 +38,7 @@ export default function PaymentsPage() {
   function getPaymentIntent(order) {
     const payment = order.payment_intents;
 
-    if (Array.isArray(payment)) {
-      return payment[0] || {};
-    }
+    if (Array.isArray(payment)) return payment[0] || {};
 
     return payment || {};
   }
@@ -57,12 +55,7 @@ export default function PaymentsPage() {
   }
 
   function getOrderReference(order) {
-    return (
-      order.order_number ||
-      order.order_code ||
-      order.id ||
-      "—"
-    );
+    return order.order_number || order.order_code || order.id || "—";
   }
 
   function formatDate(value) {
@@ -96,6 +89,27 @@ export default function PaymentsPage() {
         fontFamily: "Arial, sans-serif",
       }}
     >
+      <button
+        type="button"
+        onClick={() => {
+          window.location.href = "/admin/";
+        }}
+        style={{
+          display: "inline-block",
+          marginBottom: "20px",
+          padding: "10px 16px",
+          background: "#111827",
+          color: "#ffffff",
+          border: "none",
+          borderRadius: "8px",
+          cursor: "pointer",
+          fontSize: "14px",
+          fontWeight: "600",
+        }}
+      >
+        ← Back to Admin Panel
+      </button>
+
       <div style={{ marginBottom: "22px" }}>
         <h1 style={{ margin: "0 0 8px", fontSize: "28px" }}>
           Payments Management
