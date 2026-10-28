@@ -4,6 +4,43 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+const cellStyle = {
+  padding: "12px",
+  textAlign: "left",
+  verticalAlign: "top",
+  borderBottom: "1px solid #e3e8f0",
+  whiteSpace: "nowrap",
+};
+
+function Status({ value }) {
+  const status = value || "unknown";
+
+  const color =
+    status === "paid" || status === "utr_submitted"
+      ? "#067647"
+      : status === "failed" ||
+          status === "abandoned" ||
+          status === "expired"
+        ? "#b42318"
+        : "#6941c6";
+
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "4px 8px",
+        borderRadius: "6px",
+        background: "#f2f4f7",
+        color,
+        fontWeight: 700,
+        fontSize: "12px",
+      }}
+    >
+      {status.replaceAll("_", " ")}
+    </span>
+  );
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,9 +64,12 @@ export default function OrdersPage() {
 
         if (active) {
           setOrders(Array.isArray(result.orders) ? result.orders : []);
+          setError("");
         }
       } catch (err) {
-        if (active) setError(err.message || "Could not load orders.");
+        if (active) {
+          setError(err.message || "Could not load orders.");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -52,11 +92,19 @@ export default function OrdersPage() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <Link href="/admin" style={{ color: "#e87528", fontWeight: 700 }}>
+      <Link
+        href="/admin"
+        style={{ color: "#e87528", fontWeight: 700 }}
+      >
         ← Back to Admin Dashboard
       </Link>
 
       <h1 style={{ marginTop: "24px" }}>Orders Management</h1>
+
+      <p style={{ color: "#475467", lineHeight: 1.6 }}>
+        Review order and payment information below. Verify payments
+        directly in your bank or UPI account before approving them.
+      </p>
 
       <section
         style={{
@@ -71,7 +119,9 @@ export default function OrdersPage() {
         {loading && <p>Loading orders...</p>}
 
         {!loading && error && (
-          <p role="alert" style={{ color: "#b42318" }}>{error}</p>
+          <p role="alert" style={{ color: "#b42318" }}>
+            {error}
+          </p>
         )}
 
         {!loading && !error && orders.length === 0 && (
@@ -82,31 +132,76 @@ export default function OrdersPage() {
           <>
             <p>Total orders loaded: {orders.length}</p>
 
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "13px",
+              }}
+            >
               <thead>
-                <tr>
-                  {["Order Code", "Order ID", "User ID"].map((heading) => (
-                    <th
-                      key={heading}
-                      style={{
-                        padding: "12px",
-                        textAlign: "left",
-                        borderBottom: "1px solid #e3e8f0",
-                      }}
-                    >
+                <tr style={{ background: "#f8fafc" }}>
+                  {[
+                    "Order Code",
+                    "Order ID",
+                    "User ID",
+                    "Payment Status",
+                    "Order Status",
+                    "Payment Intent",
+                    "Submitted UTR",
+                    "Payment Expiry",
+                  ].map((heading) => (
+                    <th key={heading} style={cellStyle}>
                       {heading}
                     </th>
                   ))}
                 </tr>
               </thead>
+
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
-                    <td style={{ padding: "12px" }}>{order.order_code || "—"}</td>
-                    <td style={{ padding: "12px" }}>{order.id || "—"}</td>
-                    <td style={{ padding: "12px" }}>{order.user_id || "—"}</td>
-                  </tr>
-                ))}
+                {orders.map((order) => {
+                  const payment = Array.isArray(order.payment_intents)
+                    ? order.payment_intents[0]
+                    : order.payment_intents;
+
+                  return (
+                    <tr key={order.id}>
+                      <td style={cellStyle}>
+                        {order.order_code || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {order.id || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {order.user_id || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={order.payment_status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={order.status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={payment?.status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        {payment?.utr || "No UTR submitted"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {payment?.expires_at
+                          ? new Date(payment.expires_at).toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </>
