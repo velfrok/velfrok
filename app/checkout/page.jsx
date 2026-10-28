@@ -17,6 +17,8 @@ export default function Checkout() {
     event.preventDefault();
     setErr("");
 
+    if (busy) return;
+
     if (!cart.length) {
       setErr("Your cart is empty. Add a product before checkout.");
       return;
@@ -80,8 +82,8 @@ export default function Checkout() {
         return;
       }
 
-      // Save which cart belongs to this payment session.
-      // Keep the cart itself until payment is confirmed as paid.
+      // Save a snapshot for this payment session.
+      // Never clear the active cart here.
       try {
         localStorage.setItem(
           `velfrok-pending-cart-${json.token}`,
@@ -94,7 +96,8 @@ export default function Checkout() {
         );
       }
 
-      router.push(`/payment/${json.token}`);
+      // The payment page handles confirmation.
+      router.push(`/payment/${encodeURIComponent(json.token)}`);
     } catch (error) {
       console.error("Checkout error:", error);
       setErr("A network error occurred. Please try again.");
@@ -111,7 +114,7 @@ export default function Checkout() {
         </h1>
 
         <div className="notice">
-          Your bag{" "}is empty.{" "}
+          Your bag is empty.{" "}
           <a href="/#shop">Browse products</a> to add items.
         </div>
       </section>
