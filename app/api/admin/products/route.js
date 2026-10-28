@@ -1,63 +1,79 @@
 
 import { NextResponse } from "next/server";
+import { getAdminSession } from "@/lib/admin-session";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-async function checkAdmin(request) {
-  const token = request.cookies.get("sb-access-token")?.value;
+function json(body, status = 200, session = null) {
+  const response = NextResponse.json(body, { status });
 
-  if (!token) {
+  if (session?.clearCookies) {
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    };
+
+    response.cookies.set("sb-access-token", "", options);
+    response.cookies.set("sb-refresh-token", "", options);
+    response.cookies.set("admin-otp-session", "", {
+      ...options,
+      sameSite: "strict",
+    });
+    response.cookies.set("admin-otp-refresh-session", "", {
+      ...options,
+      sameSite: "strict",
+    });
+  } else if (session?.setCookies) {
+    session.setCookies(response);
+  }
+
+  return response;
+}
+
+async function authenticate(request) {
+  try {
+    const session = await getAdminSession(request);
+
+    if (!session.user) {
+      return {
+        error: json(
+          { error: "Please sign in again." },
+          401,
+          session
+        ),
+      };
+    }
+
+    return {
+      user: session.user,
+      session,
+      client: supabaseAdmin(),
+    };
+  } catch {
+    console.error("Admin products authentication check failed.");
+
     return {
       error: NextResponse.json(
-        { error: "Please sign in again." },
-        { status: 401 }
+        { error: "Unable to verify administrator access." },
+        { status: 503 }
       ),
     };
   }
+}
 
-  const client = supabaseAdmin();
-
-  const {
-    data: { user },
-    error: authError,
-  } = await client.auth.getUser(token);
-
-  if (authError || !user) {
-    return {
-      error: NextResponse.json(
-        { error: "Your session is invalid. Please sign in again." },
-        { status: 401 }
-      ),
-    };
-  }
-
-  const { data: admin, error: adminError } = await client
-    .from("admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (adminError || !admin) {
-    return {
-      error: NextResponse.json(
-        { error: "Administrator access required." },
-        { status: 403 }
-      ),
-    };
-  }
-
-  return { client };
+function fail(message, status, session) {
+  return json({ error: message }, status, session);
 }
 
 export async function GET(request) {
+  const auth = await authenticate(request);
+  if (auth.error) return auth.error;
+
   try {
-    const auth = await checkAdmin(request);
-
-    if (auth.error) {
-      return auth.error;
-    }
-
     const { data, error } = await auth.client
       .from("products")
       .select("*")
@@ -66,40 +82,40 @@ export async function GET(request) {
     if (error) {
       console.error("Admin products lookup failed.");
 
-      return NextResponse.json(
-        { error: "Unable to load products." },
-        { status: 500 }
-      );
+      return fail("Unable to load products.", 500, auth.session);
     }
 
-    return NextResponse.json({ products: data || [] });
+    return json(
+      { products: data || [] },
+      200,
+      auth.session
+    );
   } catch {
     console.error("Unexpected admin products lookup error.");
 
-    return NextResponse.json(
-      { error: "Unable to load products right now." },
-      { status: 500 }
+    return fail(
+      "Unable to load products right now.",
+      500,
+      auth.session
     );
   }
 }
 
 export async function POST(request) {
+  const auth = await authenticate(request);
+  if (auth.error) return auth.error;
+
   try {
-    const auth = await checkAdmin(request);
-
-    if (auth.error) {
-      return auth.error;
-    }
-
     let body;
 
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json(
-        { error: "Invalid request data." },
-        { status: 400 }
-      );
+      return fail("Invalid request data.", 400, auth.session);
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return fail("Invalid request data.", 400, auth.session);
     }
 
     const sku = String(body.sku || "").trim();
@@ -113,23 +129,27 @@ export async function POST(request) {
     const stock = Number(body.stock);
 
     if (!sku || !name || !slug) {
-      return NextResponse.json(
-        { error: "SKU, product name, and slug are required." },
-        { status: 400 }
+      return fail(
+        "SKU, product name, and slug are required.",
+        400,
+        auth.session
       );
     }
 
     if (
       body.price_inr === "" ||
+      body.price_inr === null ||
       body.stock === "" ||
+      body.stock === null ||
       !Number.isSafeInteger(priceInr) ||
       priceInr < 0 ||
       !Number.isSafeInteger(stock) ||
       stock < 0
     ) {
-      return NextResponse.json(
-        { error: "Price and stock must be valid non-negative whole numbers." },
-        { status: 400 }
+      return fail(
+        "Price and stock must be valid non-negative whole numbers.",
+        400,
+        auth.session
       );
     }
 
@@ -155,57 +175,60 @@ export async function POST(request) {
       console.error("Admin product creation failed.");
 
       if (error.code === "23505") {
-        return NextResponse.json(
-          { error: "This SKU or slug already exists. Use a different one." },
-          { status: 409 }
+        return fail(
+          "This SKU or slug already exists. Use a different one.",
+          409,
+          auth.session
         );
       }
 
-      return NextResponse.json(
-        { error: "Unable to create product. Check the product fields and database columns." },
-        { status: 500 }
+      return fail(
+        "Unable to create product. Check the product fields and database columns.",
+        500,
+        auth.session
       );
     }
 
-    return NextResponse.json(
-      { message: "Product created successfully.", product: data },
-      { status: 201 }
+    return json(
+      {
+        message: "Product created successfully.",
+        product: data,
+      },
+      201,
+      auth.session
     );
   } catch {
     console.error("Unexpected admin product creation error.");
 
-    return NextResponse.json(
-      { error: "Unable to create the product right now." },
-      { status: 500 }
+    return fail(
+      "Unable to create the product right now.",
+      500,
+      auth.session
     );
   }
 }
+
 export async function PATCH(request) {
+  const auth = await authenticate(request);
+  if (auth.error) return auth.error;
+
   try {
-    const auth = await checkAdmin(request);
-
-    if (auth.error) {
-      return auth.error;
-    }
-
     let body;
 
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json(
-        { error: "Invalid request data." },
-        { status: 400 }
-      );
+      return fail("Invalid request data.", 400, auth.session);
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return fail("Invalid request data.", 400, auth.session);
     }
 
     const id = String(body.id || "").trim();
 
     if (!id) {
-      return NextResponse.json(
-        { error: "Product ID is required." },
-        { status: 400 }
-      );
+      return fail("Product ID is required.", 400, auth.session);
     }
 
     const allowedFields = [
@@ -229,9 +252,10 @@ export async function PATCH(request) {
     }
 
     if (Object.keys(updates).length === 0) {
-      return NextResponse.json(
-        { error: "No product changes were provided." },
-        { status: 400 }
+      return fail(
+        "No product changes were provided.",
+        400,
+        auth.session
       );
     }
 
@@ -241,9 +265,10 @@ export async function PATCH(request) {
           typeof updates[field] !== "string" ||
           !updates[field].trim()
         ) {
-          return NextResponse.json(
-            { error: `${field} cannot be empty.` },
-            { status: 400 }
+          return fail(
+            `${field} cannot be empty.`,
+            400,
+            auth.session
           );
         }
 
@@ -254,9 +279,10 @@ export async function PATCH(request) {
     for (const field of ["description", "image_url", "category"]) {
       if (field in updates) {
         if (typeof updates[field] !== "string") {
-          return NextResponse.json(
-            { error: `${field} must be text.` },
-            { status: 400 }
+          return fail(
+            `${field} must be text.`,
+            400,
+            auth.session
           );
         }
 
@@ -275,9 +301,10 @@ export async function PATCH(request) {
           !Number.isSafeInteger(Number(value)) ||
           Number(value) < 0
         ) {
-          return NextResponse.json(
-            { error: `${field} must be a non-negative whole number.` },
-            { status: 400 }
+          return fail(
+            `${field} must be a non-negative whole number.`,
+            400,
+            auth.session
           );
         }
 
@@ -289,9 +316,10 @@ export async function PATCH(request) {
       "is_active" in updates &&
       typeof updates.is_active !== "boolean"
     ) {
-      return NextResponse.json(
-        { error: "is_active must be true or false." },
-        { status: 400 }
+      return fail(
+        "is_active must be true or false.",
+        400,
+        auth.session
       );
     }
 
@@ -308,35 +336,87 @@ export async function PATCH(request) {
       console.error("Admin product update failed.");
 
       if (error.code === "23505") {
-        return NextResponse.json(
-          { error: "That SKU or slug is already used by another product." },
-          { status: 409 }
+        return fail(
+          "That SKU or slug is already used by another product.",
+          409,
+          auth.session
         );
       }
 
-      return NextResponse.json(
-        { error: "Unable to update product." },
-        { status: 500 }
-      );
+      return fail("Unable to update product.", 500, auth.session);
     }
 
     if (!data) {
-      return NextResponse.json(
-        { error: "Product not found." },
-        { status: 404 }
-      );
+      return fail("Product not found.", 404, auth.session);
     }
 
-    return NextResponse.json({
-      message: "Product updated successfully.",
-      product: data,
-    });
+    return json(
+      {
+        message: "Product updated successfully.",
+        product: data,
+      },
+      200,
+      auth.session
+    );
   } catch {
     console.error("Unexpected admin product update error.");
 
-    return NextResponse.json(
-      { error: "Unable to update the product right now." },
-      { status: 500 }
+    return fail(
+      "Unable to update the product right now.",
+      500,
+      auth.session
+    );
+  }
+}
+
+export async function DELETE(request) {
+  const auth = await authenticate(request);
+  if (auth.error) return auth.error;
+
+  try {
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return fail("Invalid request data.", 400, auth.session);
+    }
+
+    const id = String(body?.id || "").trim();
+
+    if (!id) {
+      return fail("Product ID is required.", 400, auth.session);
+    }
+
+    const { data, error } = await auth.client
+      .from("products")
+      .delete()
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Admin product deletion failed.");
+
+      return fail("Unable to delete product.", 500, auth.session);
+    }
+
+    if (!data) {
+      return fail("Product not found.", 404, auth.session);
+    }
+
+    return json(
+      { message: "Product deleted successfully.", id: data.id },
+      200,
+      auth.session
+    );
+  } catch {
+    console.error("Unexpected admin product deletion error.");
+
+    return fail(
+      "Unable to delete the product right now.",
+      500,
+      auth.session
     );
   }
 }
