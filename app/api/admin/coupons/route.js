@@ -1,53 +1,34 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getAdminSession } from "@/lib/admin-session";
 
 export const runtime = "nodejs";
 
 async function checkAdmin(request) {
-  const token = request.cookies.get("sb-access-token")?.value;
+  const result = await getAdminSession(request);
 
-  if (!token) {
+  if (result.error) {
     return {
-      error: NextResponse.json(
-        { error: "Please sign in again." },
-        { status: 401 }
-      ),
+      error: result.error,
+      setCookies: result.clearCookies,
     };
   }
 
-  const client = supabaseAdmin();
+  return {
+    client: supabaseAdmin(),
+    setCookies: result.setCookies,
+  };
+}
 
-  const {
-    data: { user },
-    error: authError,
-  } = await client.auth.getUser(token);
+function jsonResponse(auth, body, status = 200) {
+  const response = NextResponse.json(body, { status });
 
-  if (authError || !user) {
-    return {
-      error: NextResponse.json(
-        { error: "Your session is invalid. Please sign in again." },
-        { status: 401 }
-      ),
-    };
+  if (auth?.setCookies) {
+    auth.setCookies(response);
   }
 
-  const { data: admin, error: adminError } = await client
-    .from("admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (adminError || !admin) {
-    return {
-      error: NextResponse.json(
-        { error: "Administrator access required." },
-        { status: 403 }
-      ),
-    };
-  }
-
-  return { client };
+  return response;
 }
 
 function normalizeCode(value) {
@@ -104,7 +85,9 @@ function validateCoupon(body, partial = false) {
       updates.expires_at = null;
     } else {
       if (typeof value !== "string") {
-        return { error: "Expiration date must be a valid date or empty." };
+        return {
+          error: "Expiration date must be a valid date or empty.",
+        };
       }
 
       const date = new Date(value);
@@ -121,9 +104,16 @@ function validateCoupon(body, partial = false) {
 }
 
 export async function GET(request) {
+  let auth;
+
   try {
-    const auth = await checkAdmin(request);
-    if (auth.error) return auth.error;
+    auth = await checkAdmin(request);
+
+    if (auth.error) {
+      return jsonResponse(auth, {
+        error: "Administrator session is invalid or expired.",
+      }, auth.error.status || 401);
+    }
 
     const { data, error } = await auth.client
       .from("coupons")
@@ -133,53 +123,55 @@ export async function GET(request) {
     if (error) {
       console.error("Admin coupons lookup failed.");
 
-      return NextResponse.json(
-        { error: "Unable to load coupons." },
-        { status: 500 }
-      );
+      return jsonResponse(auth, {
+        error: "Unable to load coupons.",
+      }, 500);
     }
 
-    return NextResponse.json({ coupons: data || [] });
+    return jsonResponse(auth, { coupons: data || [] });
   } catch {
     console.error("Unexpected admin coupons lookup error.");
 
-    return NextResponse.json(
-      { error: "Unable to load coupons right now." },
-      { status: 500 }
-    );
+    return jsonResponse(auth, {
+      error: "Unable to load coupons right now.",
+    }, 500);
   }
 }
 
 export async function POST(request) {
+  let auth;
+
   try {
-    const auth = await checkAdmin(request);
-    if (auth.error) return auth.error;
+    auth = await checkAdmin(request);
+
+    if (auth.error) {
+      return jsonResponse(auth, {
+        error: "Administrator session is invalid or expired.",
+      }, auth.error.status || 401);
+    }
 
     let body;
 
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json(
-        { error: "Invalid request data." },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: "Invalid request data.",
+      }, 400);
     }
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return NextResponse.json(
-        { error: "Invalid coupon data." },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: "Invalid coupon data.",
+      }, 400);
     }
 
     const validation = validateCoupon(body);
 
     if (validation.error) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: validation.error,
+      }, 400);
     }
 
     const { data, error } = await auth.client
@@ -192,79 +184,76 @@ export async function POST(request) {
       console.error("Admin coupon creation failed.");
 
       if (error.code === "23505") {
-        return NextResponse.json(
-          { error: "This coupon code already exists." },
-          { status: 409 }
-        );
+        return jsonResponse(auth, {
+          error: "This coupon code already exists.",
+        }, 409);
       }
 
-      return NextResponse.json(
-        { error: "Unable to create coupon. Check the database schema." },
-        { status: 500 }
-      );
+      return jsonResponse(auth, {
+        error: "Unable to create coupon. Check the database schema.",
+      }, 500);
     }
 
-    return NextResponse.json(
-      { message: "Coupon created successfully.", coupon: data },
-      { status: 201 }
-    );
+    return jsonResponse(auth, {
+      message: "Coupon created successfully.",
+      coupon: data,
+    }, 201);
   } catch {
     console.error("Unexpected admin coupon creation error.");
 
-    return NextResponse.json(
-      { error: "Unable to create coupon right now." },
-      { status: 500 }
-    );
+    return jsonResponse(auth, {
+      error: "Unable to create coupon right now.",
+    }, 500);
   }
 }
 
 export async function PATCH(request) {
+  let auth;
+
   try {
-    const auth = await checkAdmin(request);
-    if (auth.error) return auth.error;
+    auth = await checkAdmin(request);
+
+    if (auth.error) {
+      return jsonResponse(auth, {
+        error: "Administrator session is invalid or expired.",
+      }, auth.error.status || 401);
+    }
 
     let body;
 
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json(
-        { error: "Invalid request data." },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: "Invalid request data.",
+      }, 400);
     }
 
     if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return NextResponse.json(
-        { error: "Invalid coupon data." },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: "Invalid coupon data.",
+      }, 400);
     }
 
     const code = normalizeCode(body.code);
 
     if (!/^[A-Z0-9_-]{3,40}$/.test(code)) {
-      return NextResponse.json(
-        { error: "A valid coupon code is required." },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: "A valid coupon code is required.",
+      }, 400);
     }
 
     const validation = validateCoupon(body, true);
 
     if (validation.error) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 }
-      );
+      return jsonResponse(auth, {
+        error: validation.error,
+      }, 400);
     }
 
-    const updates = { ...validation.updates };
-
-    // Keep the lookup code separate from the new code if it is being renamed.
     const { data, error } = await auth.client
       .from("coupons")
-      .update(updates)
+      .update(validation.updates)
       .eq("code", code)
       .select("code, discount_pct, is_active, expires_at")
       .maybeSingle();
@@ -273,35 +262,31 @@ export async function PATCH(request) {
       console.error("Admin coupon update failed.");
 
       if (error.code === "23505") {
-        return NextResponse.json(
-          { error: "That coupon code already exists." },
-          { status: 409 }
-        );
+        return jsonResponse(auth, {
+          error: "That coupon code already exists.",
+        }, 409);
       }
 
-      return NextResponse.json(
-        { error: "Unable to update coupon." },
-        { status: 500 }
-      );
+      return jsonResponse(auth, {
+        error: "Unable to update coupon.",
+      }, 500);
     }
 
     if (!data) {
-      return NextResponse.json(
-        { error: "Coupon not found." },
-        { status: 404 }
-      );
+      return jsonResponse(auth, {
+        error: "Coupon not found.",
+      }, 404);
     }
 
-    return NextResponse.json({
+    return jsonResponse(auth, {
       message: "Coupon updated successfully.",
       coupon: data,
     });
   } catch {
     console.error("Unexpected admin coupon update error.");
 
-    return NextResponse.json(
-      { error: "Unable to update coupon right now." },
-      { status: 500 }
-    );
+    return jsonResponse(auth, {
+      error: "Unable to update coupon right now.",
+    }, 500);
   }
 }
