@@ -360,7 +360,7 @@ export async function PATCH(request) {
           typeof updates[field] !== "string"
         ) {
           return fail(
-            \`\${field} must be text or null.\`,
+            `${field} must be text or null.`,
             400,
             auth.session
           );
