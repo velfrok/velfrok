@@ -343,7 +343,7 @@ export async function PATCH(request) {
           !updates[field].trim()
         ) {
           return fail(
-            \`\${field} cannot be empty.\`,
+            `${field} cannot be empty.`,
             400,
             auth.session
           );
