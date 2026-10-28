@@ -1,62 +1,72 @@
 
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import {
+  getAdminSession,
+  adminLoginRedirect,
+} from "@/lib/admin-session";
 
 const ALLOWED_ORIGINS = (process.env.NEXT_PUBLIC_SITE_URL || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+function clearSessionCookies(response) {
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  };
+
+  response.cookies.set("sb-access-token", "", options);
+  response.cookies.set("sb-refresh-token", "", options);
+  response.cookies.set("admin-otp-session", "", {
+    ...options,
+    sameSite: "strict",
+  });
+  response.cookies.set("admin-otp-refresh-session", "", {
+    ...options,
+    sameSite: "strict",
+  });
+
+  return response;
+}
+
 export async function middleware(req) {
   const { pathname } = req.nextUrl;
+  let response;
 
   if (
     pathname.startsWith("/admin") &&
     !pathname.startsWith("/admin/login")
   ) {
-    const loginUrl = new URL("/admin/login", req.url);
-    const token = req.cookies.get("sb-access-token")?.value;
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    // Fail closed if configuration or session is missing.
-    if (!token || !supabaseUrl || !serviceKey) {
-      return NextResponse.redirect(loginUrl);
-    }
-
     try {
-      const supabase = createClient(supabaseUrl, serviceKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      });
+      const result = await getAdminSession(req);
 
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser(token);
+      if (!result.user) {
+        response = adminLoginRedirect(req);
 
-      if (authError || !user) {
-        return NextResponse.redirect(loginUrl);
+        if (result.clearCookies) {
+          clearSessionCookies(response);
+        }
+
+        return response;
       }
 
-      const { data: admin, error: adminError } = await supabase
-        .from("admins")
-        .select("user_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      response = NextResponse.next();
 
-      if (adminError || !admin) {
-        return NextResponse.redirect(loginUrl);
-      }
+      // If the access token was refreshed, save the rotated tokens.
+      response = result.setCookies(response);
+
     } catch {
       console.error("Admin middleware authentication check failed.");
-      return NextResponse.redirect(loginUrl);
+      return adminLoginRedirect(req);
     }
+  } else {
+    response = NextResponse.next();
   }
 
-  const res = NextResponse.next();
   const origin = req.headers.get("origin");
 
   if (pathname.startsWith("/api/")) {
@@ -68,21 +78,21 @@ export async function middleware(req) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 
-    res.headers.set(
+    response.headers.set(
       "Access-Control-Allow-Origin",
       origin || ALLOWED_ORIGINS[0] || "*"
     );
-    res.headers.set(
+    response.headers.set(
       "Access-Control-Allow-Methods",
       "GET,POST,PATCH,DELETE,OPTIONS"
     );
-    res.headers.set(
+    response.headers.set(
       "Access-Control-Allow-Headers",
       "Content-Type, Authorization"
     );
   }
 
-  return res;
+  return response;
 }
 
 export const config = {
