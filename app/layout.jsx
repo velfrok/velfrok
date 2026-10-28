@@ -1,5 +1,7 @@
+
 import "./globals.css";
 import { CartProvider } from "@/context/CartContext";
+import FloatingBuyNow from "@/components/FloatingBuyNow";
 
 export const metadata = {
   title: "VELFROK — Everyday essentials",
@@ -17,19 +19,43 @@ export default function RootLayout({ children }) {
       <body>
         <CartProvider>
           <header className="site-header">
-            <a className="wordmark" href="/" aria-label="VELFROK home">VELFROK<span>.</span></a>
-            <nav className="site-nav" aria-label="Main navigation">
+            <a
+              className="wordmark"
+              href="/"
+              aria-label="VELFROK home"
+            >
+              VELFROK<span>.</span>
+            </a>
+
+            <nav
+              className="site-nav"
+              aria-label="Main navigation"
+            >
               <a href="/">Shop</a>
               <a href="/cart">Cart</a>
-              <a className="nav-cta" href="/checkout">Checkout</a>
+              <a className="nav-cta" href="/checkout">
+                Checkout
+              </a>
             </nav>
           </header>
+
           <main className="site-main">{children}</main>
+
           <footer className="site-footer">
-            <a className="wordmark" href="/">VELFROK<span>.</span></a>
-            <p>Everyday essentials, thoughtfully selected.</p>
-            <small>© {new Date().getFullYear()} VELFROK</small>
+            <a className="wordmark" href="/">
+              VELFROK<span>.</span>
+            </a>
+
+            <p>
+              Everyday essentials, thoughtfully selected.
+            </p>
+
+            <small>
+              © {new Date().getFullYear()} VELFROK
+            </small>
           </footer>
+
+          <FloatingBuyNow />
         </CartProvider>
       </body>
     </html>
