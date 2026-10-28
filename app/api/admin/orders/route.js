@@ -106,7 +106,7 @@ export async function PATCH(request) {
       return fail("Invalid request data.", 400);
     }
 
-    const { orderId, paymentStatus, orderStatus } = body;
+    const { orderId, paymentStatus, orderStatus } = body || {};
     const id = clean(String(orderId || ""), 40);
 
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
@@ -137,7 +137,7 @@ export async function PATCH(request) {
       return fail("Nothing to update.", 400);
     }
 
-    // Payment verification and order transitions must be separate actions.
+    // Payment and order status must be separate operations.
     if (paymentStatus !== undefined && orderStatus !== undefined) {
       return fail(
         "Update payment status and order status in separate requests.",
@@ -160,7 +160,7 @@ export async function PATCH(request) {
       return fail("Order not found.", 404);
     }
 
-    // Payment failure cannot overwrite a successful payment.
+    // Payment failure cannot overwrite a paid order.
     if (
       paymentStatus === "failed" &&
       existingOrder.payment_status === "paid"
@@ -168,13 +168,10 @@ export async function PATCH(request) {
       return fail("A paid order cannot be marked as failed.", 409);
     }
 
-    // Approve payment only after independent bank/UPI verification.
-    // The database function also requires a valid submitted UTR
-    // and checks stock before marking the order paid.
+    // Payment approval is handled by the existing atomic database function.
+    // Independently verify the actual bank/UPI receipt before using this action.
     if (paymentStatus === "paid") {
-      if (
-        existingOrder.payment_status === "paid"
-      ) {
+      if (existingOrder.payment_status === "paid") {
         return fail("This order is already marked as paid.", 409);
       }
 
@@ -189,14 +186,32 @@ export async function PATCH(request) {
         );
 
         return fail(
-          "Payment approval was rejected. Verify the payment in your bank or UPI account, confirm a UTR was submitted, and check product stock and order items before retrying.",
+          "Payment approval was rejected. Verify the bank/UPI receipt, confirm a UTR was submitted, and check stock and order items.",
           409
         );
       }
-    }
+    } else if (paymentStatus === "failed") {
+      // Conditional update prevents overwriting a concurrent paid status.
+      const { data: updatedOrder, error: updateError } = await auth.client
+        .from("orders")
+        .update({ payment_status: "failed" })
+        .eq("id", id)
+        .eq("payment_status", existingOrder.payment_status)
+        .select("id")
+        .maybeSingle();
 
-    // Only allow the agreed order-status transitions.
-    if (orderStatus !== undefined) {
+      if (updateError) {
+        console.error("Order payment status update failed.");
+        return fail("Unable to update payment status.", 500);
+      }
+
+      if (!updatedOrder) {
+        return fail(
+          "The payment status changed. Reload the order before retrying.",
+          409
+        );
+      }
+    } else if (orderStatus !== undefined) {
       const allowedTransitions = {
         placed: ["packed", "cancelled"],
         packed: ["dispatched", "cancelled"],
@@ -223,30 +238,29 @@ export async function PATCH(request) {
           409
         );
       }
-    }
 
-    const patch = {};
-
-    if (paymentStatus === "failed") {
-      patch.payment_status = "failed";
-    }
-
-    if (orderStatus !== undefined) {
-      patch.status = orderStatus;
-    }
-
-    if (Object.keys(patch).length > 0) {
-      const { error: updateError } = await auth.client
+      // Compare-and-set: only update if the status is still what we read.
+      // The database trigger also validates the transition.
+      const { data: updatedOrder, error: updateError } = await auth.client
         .from("orders")
-        .update(patch)
-        .eq("id", id);
+        .update({ status: orderStatus })
+        .eq("id", id)
+        .eq("status", existingOrder.status)
+        .select("id")
+        .maybeSingle();
 
       if (updateError) {
         console.error("Admin order status update failed.");
-
         return fail(
-          "The update failed. Reload the order and verify its current status before retrying.",
-          500
+          "The status update was rejected. Reload the order and verify its current status.",
+          409
+        );
+      }
+
+      if (!updatedOrder) {
+        return fail(
+          "The order status changed. Reload the order before retrying.",
+          409
         );
       }
     }
