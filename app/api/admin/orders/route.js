@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getAdminSession } from "@/lib/admin-session";
 import { auditLog } from "@/lib/audit";
 import { clean } from "@/lib/sanitize";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
@@ -11,37 +12,63 @@ function fail(message, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function checkAdminCookie(request) {
-  const token = request.cookies.get("sb-access-token")?.value;
+function applySession(response, auth) {
+  if (auth?.clearCookies) {
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    };
 
-  if (!token) {
-    return { error: fail("Please sign in again.", 401) };
+    response.cookies.set("sb-access-token", "", options);
+    response.cookies.set("sb-refresh-token", "", options);
+    response.cookies.set("admin-otp-session", "", {
+      ...options,
+      sameSite: "strict",
+    });
+    response.cookies.set("admin-otp-refresh-session", "", {
+      ...options,
+      sameSite: "strict",
+    });
+  } else if (auth?.setCookies) {
+    return auth.setCookies(response);
   }
 
-  const client = supabaseAdmin();
+  return response;
+}
 
-  const {
-    data: { user },
-    error: authError,
-  } = await client.auth.getUser(token);
+function reply(auth, body, status = 200) {
+  return applySession(NextResponse.json(body, { status }), auth);
+}
 
-  if (authError || !user) {
+async function checkAdminCookie(request) {
+  let session;
+
+  try {
+    session = await getAdminSession(request);
+  } catch {
+    console.error("Admin orders authentication check failed.");
     return {
-      error: fail("Your session is invalid. Please sign in again.", 401),
+      error: fail("Unable to verify administrator access.", 503),
     };
   }
 
-  const { data: admin, error: adminError } = await client
-    .from("admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (adminError || !admin) {
-    return { error: fail("Administrator access required.", 403) };
+  if (!session.user) {
+    return {
+      error: applySession(
+        fail("Your session is invalid. Please sign in again.", 401),
+        session
+      ),
+    };
   }
 
-  return { user, client };
+  return {
+    user: session.user,
+    session,
+    client: supabaseAdmin(),
+  };
 }
 
 async function rateLimitSafe(request, user) {
@@ -68,8 +95,10 @@ async function rateLimitSafe(request, user) {
 }
 
 export async function GET(request) {
+  let auth;
+
   try {
-    const auth = await checkAdminCookie(request);
+    auth = await checkAdminCookie(request);
     if (auth.error) return auth.error;
 
     const { data, error } = await auth.client
@@ -80,44 +109,48 @@ export async function GET(request) {
 
     if (error) {
       console.error("Admin orders lookup failed.");
-      return fail("Unable to load orders.", 500);
+      return reply(auth.session, { error: "Unable to load orders." }, 500);
     }
 
-    return NextResponse.json({ orders: data || [] });
+    return reply(auth.session, { orders: data || [] });
   } catch {
     console.error("Unexpected admin orders lookup error.");
-    return fail("Unable to load orders right now.", 500);
+    return reply(auth?.session, {
+      error: "Unable to load orders right now.",
+    }, 500);
   }
 }
 
 export async function PATCH(request) {
+  let auth;
+
   try {
-    const auth = await checkAdminCookie(request);
+    auth = await checkAdminCookie(request);
     if (auth.error) return auth.error;
 
     const limitError = await rateLimitSafe(request, auth.user);
-    if (limitError) return limitError;
+    if (limitError) return applySession(limitError, auth.session);
 
     let body;
 
     try {
       body = await request.json();
     } catch {
-      return fail("Invalid request data.", 400);
+      return reply(auth.session, { error: "Invalid request data." }, 400);
     }
 
     const { orderId, paymentStatus, orderStatus } = body || {};
     const id = clean(String(orderId || ""), 40);
 
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
-      return fail("Bad order ID.", 400);
+      return reply(auth.session, { error: "Bad order ID." }, 400);
     }
 
     if (
       paymentStatus !== undefined &&
       !["paid", "failed"].includes(paymentStatus)
     ) {
-      return fail("Invalid payment status.", 400);
+      return reply(auth.session, { error: "Invalid payment status." }, 400);
     }
 
     if (
@@ -130,17 +163,19 @@ export async function PATCH(request) {
         "cancelled",
       ].includes(orderStatus)
     ) {
-      return fail("Invalid order status.", 400);
+      return reply(auth.session, { error: "Invalid order status." }, 400);
     }
 
     if (paymentStatus === undefined && orderStatus === undefined) {
-      return fail("Nothing to update.", 400);
+      return reply(auth.session, { error: "Nothing to update." }, 400);
     }
 
-    // Payment and order status must be separate operations.
     if (paymentStatus !== undefined && orderStatus !== undefined) {
-      return fail(
-        "Update payment status and order status in separate requests.",
+      return reply(
+        auth.session,
+        {
+          error: "Update payment status and order status in separate requests.",
+        },
         400
       );
     }
@@ -153,26 +188,31 @@ export async function PATCH(request) {
 
     if (findError) {
       console.error("Admin order lookup failed.");
-      return fail("Unable to find the order.", 500);
+      return reply(auth.session, { error: "Unable to find the order." }, 500);
     }
 
     if (!existingOrder) {
-      return fail("Order not found.", 404);
+      return reply(auth.session, { error: "Order not found." }, 404);
     }
 
-    // Payment failure cannot overwrite a paid order.
     if (
       paymentStatus === "failed" &&
       existingOrder.payment_status === "paid"
     ) {
-      return fail("A paid order cannot be marked as failed.", 409);
+      return reply(
+        auth.session,
+        { error: "A paid order cannot be marked as failed." },
+        409
+      );
     }
 
-    // Payment approval is handled by the existing atomic database function.
-    // Independently verify the actual bank/UPI receipt before using this action.
     if (paymentStatus === "paid") {
       if (existingOrder.payment_status === "paid") {
-        return fail("This order is already marked as paid.", 409);
+        return reply(
+          auth.session,
+          { error: "This order is already marked as paid." },
+          409
+        );
       }
 
       const { error: rpcError } = await auth.client.rpc(
@@ -181,17 +221,18 @@ export async function PATCH(request) {
       );
 
       if (rpcError) {
-        console.error(
-          "Atomic order payment and stock update failed."
-        );
+        console.error("Atomic order payment and stock update failed.");
 
-        return fail(
-          "Payment approval was rejected. Verify the bank/UPI receipt, confirm a UTR was submitted, and check stock and order items.",
+        return reply(
+          auth.session,
+          {
+            error:
+              "Payment approval was rejected. Verify the bank/UPI receipt, confirm a UTR was submitted, and check stock and order items.",
+          },
           409
         );
       }
     } else if (paymentStatus === "failed") {
-      // Conditional update prevents overwriting a concurrent paid status.
       const { data: updatedOrder, error: updateError } = await auth.client
         .from("orders")
         .update({ payment_status: "failed" })
@@ -202,12 +243,20 @@ export async function PATCH(request) {
 
       if (updateError) {
         console.error("Order payment status update failed.");
-        return fail("Unable to update payment status.", 500);
+        return reply(
+          auth.session,
+          { error: "Unable to update payment status." },
+          500
+        );
       }
 
       if (!updatedOrder) {
-        return fail(
-          "The payment status changed. Reload the order before retrying.",
+        return reply(
+          auth.session,
+          {
+            error:
+              "The payment status changed. Reload the order before retrying.",
+          },
           409
         );
       }
@@ -223,8 +272,11 @@ export async function PATCH(request) {
       if (
         !allowedTransitions[existingOrder.status]?.includes(orderStatus)
       ) {
-        return fail(
-          `Cannot change order status from "${existingOrder.status}" to "${orderStatus}".`,
+        return reply(
+          auth.session,
+          {
+            error: `Cannot change order status from "${existingOrder.status}" to "${orderStatus}".`,
+          },
           409
         );
       }
@@ -233,14 +285,13 @@ export async function PATCH(request) {
         orderStatus === "packed" &&
         existingOrder.payment_status !== "paid"
       ) {
-        return fail(
-          "Only a paid order can be accepted and packed.",
+        return reply(
+          auth.session,
+          { error: "Only a paid order can be accepted and packed." },
           409
         );
       }
 
-      // Compare-and-set: only update if the status is still what we read.
-      // The database trigger also validates the transition.
       const { data: updatedOrder, error: updateError } = await auth.client
         .from("orders")
         .update({ status: orderStatus })
@@ -251,15 +302,23 @@ export async function PATCH(request) {
 
       if (updateError) {
         console.error("Admin order status update failed.");
-        return fail(
-          "The status update was rejected. Reload the order and verify its current status.",
+        return reply(
+          auth.session,
+          {
+            error:
+              "The status update was rejected. Reload the order and verify its current status.",
+          },
           409
         );
       }
 
       if (!updatedOrder) {
-        return fail(
-          "The order status changed. Reload the order before retrying.",
+        return reply(
+          auth.session,
+          {
+            error:
+              "The order status changed. Reload the order before retrying.",
+          },
           409
         );
       }
@@ -270,14 +329,16 @@ export async function PATCH(request) {
       ...(paymentStatus !== undefined
         ? { payment_status: paymentStatus }
         : {}),
-      ...(orderStatus !== undefined
-        ? { status: orderStatus }
-        : {}),
+      ...(orderStatus !== undefined ? { status: orderStatus } : {}),
     });
 
-    return NextResponse.json({ ok: true });
+    return reply(auth.session, { ok: true });
   } catch {
     console.error("Unexpected admin order update error.");
-    return fail("Unable to update the order right now.", 500);
+    return reply(
+      auth?.session,
+      { error: "Unable to update the order right now." },
+      500
+    );
   }
 }
