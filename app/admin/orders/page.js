@@ -53,6 +53,25 @@ function Status({ value }) {
   );
 }
 
+/*
+ * A valid submitted UTR must exist before payment approval
+ * can be enabled. This is a UI check, not proof of payment.
+ */
+function hasValidSubmittedUtr(order) {
+  const payments = Array.isArray(order?.payment_intents)
+    ? order.payment_intents
+    : order?.payment_intents
+      ? [order.payment_intents]
+      : [];
+
+  return payments.some(
+    (payment) =>
+      payment?.status === "utr_submitted" &&
+      typeof payment?.utr === "string" &&
+      payment.utr.trim().length >= 6
+  );
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,6 +110,16 @@ export default function OrdersPage() {
   async function performAction(order, action) {
     if (busyId) return;
 
+    if (
+      action === "paid" &&
+      !hasValidSubmittedUtr(order)
+    ) {
+      setError(
+        "Payment approval blocked: no valid submitted UTR was found. Refresh the order and verify its payment details."
+      );
+      return;
+    }
+
     const descriptions = {
       paid:
         "Have you independently verified the actual bank/UPI receipt and matched the submitted UTR to this order? Stock will be deducted by the existing payment function.",
@@ -107,29 +136,6 @@ export default function OrdersPage() {
     };
 
     if (!window.confirm(descriptions[action])) return;
-
-    if (action === "paid") {
-      const payment = Array.isArray(order.payment_intents)
-        ? order.payment_intents.find(
-            (item) =>
-              item.status === "utr_submitted" &&
-              typeof item.utr === "string" &&
-              item.utr.trim().length >= 6
-          )
-        : order.payment_intents;
-
-      if (
-        !payment ||
-        payment.status !== "utr_submitted" ||
-        typeof payment.utr !== "string" ||
-        payment.utr.trim().length < 6
-      ) {
-        setError(
-          "Payment approval blocked: a submitted UTR of at least 6 characters was not found. Refresh the order and verify its payment details."
-        );
-        return;
-      }
-    }
 
     setBusyId(order.id);
     setError("");
@@ -174,16 +180,19 @@ export default function OrdersPage() {
   }
 
   function actionButton(order, label, action, disabled = false) {
+    const isDisabled = Boolean(busyId) || disabled;
+
     return (
       <button
         key={action}
         type="button"
         style={{
           ...buttonStyle,
-          opacity: disabled || busyId ? 0.55 : 1,
-          cursor: disabled || busyId ? "not-allowed" : "pointer",
+          opacity: isDisabled ? 0.45 : 1,
+          cursor: isDisabled ? "not-allowed" : "pointer",
+          background: isDisabled ? "#f2f4f7" : "#fff",
         }}
-        disabled={Boolean(busyId) || disabled}
+        disabled={isDisabled}
         onClick={() => performAction(order, action)}
       >
         {busyId === order.id ? "Processing..." : label}
@@ -193,9 +202,8 @@ export default function OrdersPage() {
 
   function renderActions(order) {
     const actions = [];
-    const payment = Array.isArray(order.payment_intents)
-      ? order.payment_intents[0]
-      : order.payment_intents;
+    const canApprovePayment =
+      hasValidSubmittedUtr(order);
 
     if (
       order.payment_status !== "paid" &&
@@ -208,21 +216,10 @@ export default function OrdersPage() {
           order,
           "Mark Paid",
           "paid",
-          !Array.isArray(order.payment_intents) &&
-            (!payment ||
-              payment.status !== "utr_submitted" ||
-              typeof payment.utr !== "string" ||
-              payment.utr.trim().length < 6)
+          !canApprovePayment
         )
       );
-    }
 
-    if (
-      order.payment_status !== "paid" &&
-      order.payment_status !== "failed" &&
-      order.status !== "cancelled" &&
-      order.status !== "delivered"
-    ) {
       actions.push(
         actionButton(order, "Mark Payment Failed", "failed")
       );
@@ -230,26 +227,62 @@ export default function OrdersPage() {
 
     if (order.status === "placed") {
       if (order.payment_status === "paid") {
-        actions.push(actionButton(order, "Accept / Pack", "packed"));
+        actions.push(
+          actionButton(order, "Accept / Pack", "packed")
+        );
       }
 
-      actions.push(actionButton(order, "Reject / Cancel", "cancelled"));
+      actions.push(
+        actionButton(order, "Reject / Cancel", "cancelled")
+      );
     }
 
     if (order.status === "packed") {
-      actions.push(actionButton(order, "Dispatch", "dispatched"));
-      actions.push(actionButton(order, "Cancel Order", "cancelled"));
+      actions.push(
+        actionButton(order, "Dispatch", "dispatched")
+      );
+
+      actions.push(
+        actionButton(order, "Cancel Order", "cancelled")
+      );
     }
 
     if (order.status === "dispatched") {
-      actions.push(actionButton(order, "Mark Delivered", "delivered"));
+      actions.push(
+        actionButton(order, "Mark Delivered", "delivered")
+      );
     }
 
     if (actions.length === 0) {
-      return <span style={{ color: "#667085" }}>No actions available</span>;
+      return (
+        <span style={{ color: "#667085" }}>
+          No actions available
+        </span>
+      );
     }
 
-    return <div style={{ minWidth: "170px" }}>{actions}</div>;
+    return (
+      <div style={{ minWidth: "170px" }}>
+        {actions}
+        {!canApprovePayment &&
+          order.payment_status !== "paid" &&
+          order.payment_status !== "failed" &&
+          order.status !== "cancelled" &&
+          order.status !== "delivered" && (
+            <p
+              style={{
+                color: "#b42318",
+                fontSize: "11px",
+                whiteSpace: "normal",
+                margin: "6px 2px",
+              }}
+            >
+              Payment approval requires a submitted UTR
+              of at least 6 characters.
+            </p>
+          )}
+      </div>
+    );
   }
 
   return (
@@ -269,12 +302,16 @@ export default function OrdersPage() {
         ← Back to Admin Dashboard
       </Link>
 
-      <h1 style={{ marginTop: "24px" }}>Orders Management</h1>
+      <h1 style={{ marginTop: "24px" }}>
+        Orders Management
+      </h1>
 
       <p style={{ color: "#475467", lineHeight: 1.6 }}>
-        Verify bank/UPI receipts independently before approving payments.
-        Payment approval uses the existing stock-decrement function.
-        Cancellation does not issue refunds; arrange refunds manually.
+        Independently verify bank/UPI receipts and match
+        the submitted UTR before approving payments.
+        Payment approval uses the existing stock-decrement
+        function. Cancellation does not issue refunds;
+        arrange refunds manually.
       </p>
 
       <button
@@ -283,7 +320,7 @@ export default function OrdersPage() {
         disabled={loading || Boolean(busyId)}
         onClick={loadOrders}
       >
-        Refresh Orders
+        {loading ? "Loading..." : "Refresh Orders"}
       </button>
 
       {error && (
@@ -365,7 +402,9 @@ export default function OrdersPage() {
 
               <tbody>
                 {orders.map((order) => {
-                  const payment = Array.isArray(order.payment_intents)
+                  const payment = Array.isArray(
+                    order.payment_intents
+                  )
                     ? order.payment_intents[0]
                     : order.payment_intents;
 
@@ -374,25 +413,39 @@ export default function OrdersPage() {
                       <td style={cellStyle}>
                         {order.order_code || "—"}
                       </td>
-                      <td style={cellStyle}>{order.id || "—"}</td>
-                      <td style={cellStyle}>{order.user_id || "—"}</td>
+
+                      <td style={cellStyle}>
+                        {order.id || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {order.user_id || "—"}
+                      </td>
+
                       <td style={cellStyle}>
                         <Status value={order.payment_status} />
                       </td>
+
                       <td style={cellStyle}>
                         <Status value={order.status} />
                       </td>
+
                       <td style={cellStyle}>
                         <Status value={payment?.status} />
                       </td>
+
                       <td style={cellStyle}>
                         {payment?.utr || "No UTR submitted"}
                       </td>
+
                       <td style={cellStyle}>
                         {payment?.expires_at
-                          ? new Date(payment.expires_at).toLocaleString()
+                          ? new Date(
+                              payment.expires_at
+                            ).toLocaleString()
                           : "—"}
                       </td>
+
                       <td style={cellStyle}>
                         {renderActions(order)}
                       </td>
