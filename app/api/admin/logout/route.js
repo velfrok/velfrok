@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -8,20 +9,31 @@ export async function POST(request) {
     303
   );
 
-  response.cookies.set("sb-access-token", "", {
+  const baseOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
     path: "/",
     maxAge: 0,
+  };
+
+  response.cookies.set("sb-access-token", "", {
+    ...baseOptions,
+    sameSite: "lax",
+  });
+
+  response.cookies.set("sb-refresh-token", "", {
+    ...baseOptions,
+    sameSite: "lax",
   });
 
   response.cookies.set("admin-otp-session", "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    ...baseOptions,
     sameSite: "strict",
-    path: "/",
-    maxAge: 0,
+  });
+
+  response.cookies.set("admin-otp-refresh-session", "", {
+    ...baseOptions,
+    sameSite: "strict",
   });
 
   return response;
