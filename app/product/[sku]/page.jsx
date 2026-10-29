@@ -1,50 +1,74 @@
 
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import AddToBagButton from "@/components/AddToBagButton";
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProductPage({ params }) {
-  const sku = decodeURIComponent(params.sku || "");
+  let productKey = "";
+
+  try {
+    productKey = decodeURIComponent(String(params?.sku || ""));
+  } catch {
+    productKey = String(params?.sku || "");
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || !key || !sku) notFound();
+  if (!url || !key || !productKey) notFound();
 
   const supabase = createClient(url, key);
 
-  let { data: product } = await supabase
+  let { data: product, error } = await supabase
     .from("products")
     .select("*")
-    .eq("sku", sku)
+    .eq("sku", productKey)
     .eq("is_active", true)
     .maybeSingle();
 
-  if (!product && /^[0-9a-f-]{36}$/i.test(sku)) {
+  if (!product && !error) {
     const result = await supabase
       .from("products")
       .select("*")
-      .eq("id", sku)
+      .eq("slug", productKey)
       .eq("is_active", true)
       .maybeSingle();
 
     product = result.data;
+    error = result.error;
   }
 
-  if (!product) notFound();
+  if (!product && /^[0-9a-f-]{36}$/i.test(productKey)) {
+    const result = await supabase
+      .from("products")
+      .select("*")
+      .eq("id", productKey)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    product = result.data;
+    error = result.error;
+  }
+
+  if (error || !product) notFound();
 
   return (
     <section className="shop-section">
       <p className="eyebrow">VELFROK / PRODUCT</p>
       <Link href="/">← Back to shop</Link>
 
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
-        gap: "32px",
-        marginTop: "24px"
-      }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+          gap: "32px",
+          marginTop: "24px",
+        }}
+      >
         {product.image_url ? (
           <img
             src={product.image_url}
@@ -53,7 +77,7 @@ export default async function ProductPage({ params }) {
               width: "100%",
               maxHeight: "560px",
               objectFit: "contain",
-              borderRadius: "18px"
+              borderRadius: "18px",
             }}
           />
         ) : (
@@ -65,15 +89,21 @@ export default async function ProductPage({ params }) {
           <h2>
             ₹{Number(product.price_inr || 0).toLocaleString("en-IN")}
           </h2>
-          <p>{product.description || "An everyday essential from VELFROK."}</p>
+          <p>
+            {product.description ||
+              "An everyday essential from VELFROK."}
+          </p>
           <p>
             {Number(product.stock || 0) > 0
               ? "In stock"
               : "Sold out"}
           </p>
-          <Link className="button button-dark" href="/cart">
-            View shopping bag
-          </Link>
+
+          <AddToBagButton product={product} />
+
+          <p>
+            <Link href="/cart">View shopping bag</Link>
+          </p>
         </div>
       </div>
     </section>
