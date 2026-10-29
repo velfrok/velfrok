@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -86,6 +85,7 @@ export default function OrdersPage() {
     try {
       const response = await fetch("/api/admin/orders", {
         method: "GET",
+        credentials: "include",
         cache: "no-store",
       });
 
@@ -149,6 +149,7 @@ export default function OrdersPage() {
 
       const response = await fetch("/api/admin/orders", {
         method: "PATCH",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify(payload),
@@ -202,8 +203,7 @@ export default function OrdersPage() {
 
   function renderActions(order) {
     const actions = [];
-    const canApprovePayment =
-      hasValidSubmittedUtr(order);
+    const canApprovePayment = hasValidSubmittedUtr(order);
 
     if (
       order.payment_status !== "paid" &&
@@ -212,12 +212,7 @@ export default function OrdersPage() {
       order.status !== "delivered"
     ) {
       actions.push(
-        actionButton(
-          order,
-          "Mark Paid",
-          "paid",
-          !canApprovePayment
-        )
+        actionButton(order, "Mark Paid", "paid", !canApprovePayment)
       );
 
       actions.push(
