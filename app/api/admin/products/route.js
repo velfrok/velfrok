@@ -239,7 +239,7 @@ export async function POST(request) {
       stock,
       image_url: imageUrl || null,
       category: category || null,
-      is_active: body.is_active === true,
+      is_active: body.is_active !== false,
     };
 
     const { data, error } = await auth.client
@@ -379,7 +379,7 @@ export async function PATCH(request) {
 
         if (value === null) {
           return fail(
-            \`\${field} must be a non-negative whole number.\`,
+            `${field} must be a non-negative whole number.`,
             400,
             auth.session
           );
