@@ -14,11 +14,8 @@ export default async function Home() {
       .eq("is_active", true)
       .order("created_at", { ascending: false });
 
-    if (error) {
-      loadError = true;
-    } else {
-      products = data || [];
-    }
+    if (error) loadError = true;
+    products = data || [];
   } catch {
     loadError = true;
   }
@@ -74,7 +71,7 @@ export default async function Home() {
             </h2>
           </div>
 
-          <p>Find your next everyday favourite.</p>
+          <p>Find your next favourite.</p>
         </div>
 
         {loadError && (

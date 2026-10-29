@@ -1,21 +1,20 @@
 import Image from "next/image";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CartProvider, CartContext } from "@/context/CartContext";
+import AddToBagButton from "@/components/AddToBagButton";
 import { supabaseBrowser } from "@/lib/supabase";
 
 export default async function ProductDetailPage({ params }) {
-  const resolvedParams = await params;
-  const slug = decodedParam(resolvedParams?.slug);
+  const { slug } = await params;
+  const normalizedSlug = decodeParam(slug);
 
-  if (!slug) {
+  if (!normalizedSlug) {
     notFound();
   }
 
   const { data, error } = await supabaseBrowser()
     .from("products")
     .select("*")
-    .or(`slug.eq.${slug},sku.eq.${slug}`)
+    .or(`slug.eq.${normalizedSlug},sku.eq.${normalizedSlug}`)
     .eq("is_active", true)
     .maybeSingle();
 
@@ -63,28 +62,12 @@ export default async function ProductDetailPage({ params }) {
   );
 }
 
-function decodedParam(value) {
+function decodeParam(value) {
   if (!value) return "";
+
   try {
     return decodeURIComponent(String(value));
   } catch {
     return String(value);
   }
-}
-
-function AddToBagButton({ product }) {
-  "use client";
-
-  const { add } = useContext(CartContext);
-
-  return (
-    <button
-      type="button"
-      className="button button-dark button-full"
-      onClick={() => add(product)}
-      disabled={Number(product.stock || 0) < 1}
-    >
-      {Number(product.stock || 0) < 1 ? "Sold out" : "Add to bag"}
-    </button>
-  );
 }

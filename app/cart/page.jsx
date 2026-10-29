@@ -42,7 +42,10 @@ export default function CartPage() {
                   <p>₹{Number(item.price_inr || 0).toLocaleString("en-IN")}</p>
                 </div>
 
-                <div className="quantity-controls" aria-label={`Quantity controls for ${item.name}`}>
+                <div
+                  className="quantity-controls"
+                  aria-label={`Quantity controls for ${item.name}`}
+                >
                   <button
                     type="button"
                     aria-label={`Decrease ${item.name} quantity`}
@@ -62,9 +65,15 @@ export default function CartPage() {
                   </button>
                 </div>
 
-                <strong>₹{(Number(item.price_inr || 0) * quantity).toLocaleString("en-IN")}</strong>
+                <strong>
+                  ₹{(Number(item.price_inr || 0) * quantity).toLocaleString("en-IN")}
+                </strong>
 
-                <button type="button" className="text-button" onClick={() => remove(item.sku)}>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => remove(item.sku)}
+                >
                   Remove
                 </button>
               </article>
@@ -76,7 +85,9 @@ export default function CartPage() {
           <h2>Summary</h2>
           <div className="summary-line">
             <span>Subtotal</span>
-            <strong>₹{subtotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong>
+            <strong>
+              ₹{subtotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            </strong>
           </div>
 
           <Link href="/checkout" className="button button-dark button-full">
