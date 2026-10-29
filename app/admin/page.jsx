@@ -77,7 +77,7 @@ export default function AdminDashboard() {
           gap: 16
         }}>
           {sections.map(([title, description, href]) => (
-            <Link key={title} href={href} style={{
+            <a key={title} href={href} style={{
               background: "#fff",
               border: "1px solid #e3e8f0",
               borderRadius: 16,
@@ -98,7 +98,7 @@ export default function AdminDashboard() {
               }}>
                 {description}
               </p>
-            </Link>
+             </a>
           ))}
         </div>
 
