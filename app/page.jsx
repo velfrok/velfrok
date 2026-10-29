@@ -1,6 +1,4 @@
-
 import ProductGrid from "@/components/ProductGrid";
-import CustomerAccountNav from "@/components/CustomerAccountNav";
 import { supabaseBrowser } from "@/lib/supabase";
 
 export const revalidate = 60;
@@ -16,25 +14,17 @@ export default async function Home() {
       .eq("is_active", true)
       .order("created_at", { ascending: false });
 
-    if (error) loadError = true;
-    products = data || [];
+    if (error) {
+      loadError = true;
+    } else {
+      products = data || [];
+    }
   } catch {
     loadError = true;
   }
 
   return (
     <>
-      {/* Customer account navigation */}
-      <div
-        style={{
-          borderBottom: "1px solid #eeeeee",
-          background: "#ffffff",
-        }}
-      >
-        <CustomerAccountNav />
-      </div>
-
-      {/* Homepage Hero */}
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">THE EVERYDAY EDIT</p>
@@ -51,15 +41,11 @@ export default async function Home() {
           </p>
 
           <a className="button button-dark" href="#shop">
-            Explore the collection{" "}
-            <span aria-hidden="true">↗</span>
+            Explore the collection <span aria-hidden="true">↗</span>
           </a>
         </div>
 
-        <div
-          className="hero-art"
-          aria-label="VELFROK everyday essentials"
-        >
+        <div className="hero-art" aria-label="VELFROK everyday essentials">
           <div className="hero-orbit orbit-one" />
           <div className="hero-orbit orbit-two" />
           <div className="hero-stamp">
@@ -69,20 +55,16 @@ export default async function Home() {
             <br />
             DAILY
           </div>
-          <div className="hero-caption">
-            Curated for your everyday.
-          </div>
+          <div className="hero-caption">Curated for your everyday.</div>
         </div>
       </section>
 
-      {/* Store Benefits */}
       <section className="trust-strip" aria-label="Store benefits">
         <span>Thoughtfully selected</span>
         <span>Everyday essentials</span>
         <span>Simple, useful, reliable</span>
       </section>
 
-      {/* Product Collection */}
       <section id="shop" className="shop-section">
         <div className="section-heading">
           <div>
