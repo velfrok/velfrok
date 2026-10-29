@@ -1,48 +1,93 @@
 "use client";
 
 import { useContext } from "react";
+import Link from "next/link";
 import { CartContext } from "@/context/CartContext";
 
 export default function CartPage() {
-  const { cart, setQuantity, remove, subtotal } = useContext(CartContext);
+  const { cart, subtotal, remove, setQuantity, clear } = useContext(CartContext);
+
+  if (!cart.length) {
+    return (
+      <section className="simple-page">
+        <p className="eyebrow">YOUR BAG</p>
+        <h1>
+          Your bag is empty<span>.</span>
+        </h1>
+        <p className="muted">Add a few everyday essentials to continue.</p>
+        <Link href="/" className="button button-dark">
+          Continue shopping
+        </Link>
+      </section>
+    );
+  }
 
   return (
     <section className="simple-page">
-      <p className="eyebrow">YOUR SELECTION</p>
-      <h1>Your bag<span>.</span></h1>
-      {!cart.length ? (
-        <div className="empty-products">
-          <h2>Your bag is waiting.</h2>
-          <p>Explore the collection and add something useful.</p>
-          <a className="button button-dark" href="/#shop">Continue shopping</a>
-        </div>
-      ) : (
-        <div className="cart-layout">
-          <div className="cart-items">
-            {cart.map(item => (
+      <p className="eyebrow">YOUR BAG</p>
+      <h1>
+        Your order<span>.</span>
+      </h1>
+
+      <div className="cart-layout">
+        <div className="cart-items">
+          {cart.map((item) => {
+            const quantity = Number(item.qty || 1);
+            const stockLimit = Math.min(10, Math.max(1, Number(item.stock || 1)));
+
+            return (
               <article className="cart-item" key={item.sku}>
-                <div className="cart-thumb">
-                  {item.image_url ? <img src={item.image_url} alt="" /> : <span>V</span>}
-                </div>
-                <div className="cart-item-main">
-                  <h2>{item.name}</h2>
+                <div>
+                  <strong>{item.name}</strong>
                   <p>₹{Number(item.price_inr || 0).toLocaleString("en-IN")}</p>
-                  <button className="text-button" onClick={() => remove(item.sku)} type="button">Remove</button>
                 </div>
-                <label className="quantity-control">Qty
-                  <input aria-label={`Quantity for ${item.name}`} type="number" min="1" max={Math.min(10, Number(item.stock || 10))} value={item.qty} onChange={e => setQuantity(item.sku, e.target.value)} />
-                </label>
+
+                <div className="quantity-controls" aria-label={`Quantity controls for ${item.name}`}>
+                  <button
+                    type="button"
+                    aria-label={`Decrease ${item.name} quantity`}
+                    onClick={() => setQuantity(item.sku, quantity - 1)}
+                    disabled={quantity <= 1}
+                  >
+                    −
+                  </button>
+                  <span aria-live="polite">{quantity}</span>
+                  <button
+                    type="button"
+                    aria-label={`Increase ${item.name} quantity`}
+                    onClick={() => setQuantity(item.sku, quantity + 1)}
+                    disabled={quantity >= stockLimit}
+                  >
+                    +
+                  </button>
+                </div>
+
+                <strong>₹{(Number(item.price_inr || 0) * quantity).toLocaleString("en-IN")}</strong>
+
+                <button type="button" className="text-button" onClick={() => remove(item.sku)}>
+                  Remove
+                </button>
               </article>
-            ))}
-          </div>
-          <aside className="order-summary">
-            <h2>Order summary</h2>
-            <div className="summary-line"><span>Subtotal</span><strong>₹{subtotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong></div>
-            <p className="muted">Shipping and final charges, if any, are confirmed at checkout.</p>
-            <a className="button button-dark button-full" href="/checkout">Continue to checkout</a>
-          </aside>
+            );
+          })}
         </div>
-      )}
+
+        <aside className="cart-summary">
+          <h2>Summary</h2>
+          <div className="summary-line">
+            <span>Subtotal</span>
+            <strong>₹{subtotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong>
+          </div>
+
+          <Link href="/checkout" className="button button-dark button-full">
+            Proceed to checkout
+          </Link>
+
+          <button type="button" className="text-button" onClick={clear}>
+            Clear bag
+          </button>
+        </aside>
+      </div>
     </section>
   );
 }
