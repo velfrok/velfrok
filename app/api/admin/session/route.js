@@ -1,7 +1,9 @@
+
 import { NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin-session";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function jsonResponse(data, status = 200) {
   return NextResponse.json(data, {
@@ -26,8 +28,8 @@ export async function GET(request) {
         401
       );
 
-      if (result.clearCookies) {
-        result.clearCookies(response);
+      if (typeof result.clearCookies === "function") {
+        await result.clearCookies(response);
       }
 
       return response;
