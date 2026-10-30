@@ -10,32 +10,7 @@ const ALLOWED_ORIGINS = (process.env.NEXT_PUBLIC_SITE_URL || "")
   .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter(Boolean);
 
-function clearSessionCookies(response) {
-  const options = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  };
-
-  response.cookies.set("sb-access-token", "", options);
-  response.cookies.set("sb-refresh-token", "", options);
-
-  response.cookies.set("admin-otp-session", "", {
-    ...options,
-    sameSite: "strict",
-  });
-
-  response.cookies.set("admin-otp-refresh-session", "", {
-    ...options,
-    sameSite: "strict",
-  });
-
-  return response;
-}
-
-function isAllowedOrigin(origin) {
+function isAllowedOrigin(origin: string | null) {
   if (!origin) return true;
 
   if (ALLOWED_ORIGINS.includes(origin)) {
@@ -54,8 +29,8 @@ function isAllowedOrigin(origin) {
   }
 }
 
-export async function middleware(req) {
-  const { pathname } = req.nextUrl;
+export async function middleware(req: Request & { nextUrl: URL }) {
+  const pathname = req.nextUrl.pathname;
   const origin = req.headers.get("origin");
 
   if (pathname.startsWith("/api/")) {
@@ -104,8 +79,6 @@ export async function middleware(req) {
     }
   }
 
-  let response = NextResponse.next();
-
   if (
     pathname.startsWith("/admin") &&
     !pathname.startsWith("/admin/login")
@@ -114,20 +87,22 @@ export async function middleware(req) {
       const result = await getAdminSession(req);
 
       if (!result.user) {
-        response = adminLoginRedirect(req);
+        const response = adminLoginRedirect(req);
 
-        if (result.clearCookies) {
-          clearSessionCookies(response);
+        if (typeof result.clearCookies === "function") {
+          await result.clearCookies(response);
         }
 
         response.headers.set("Cache-Control", "no-store");
+        response.headers.set("Pragma", "no-cache");
+
         return response;
       }
 
-      response = NextResponse.next();
+      const response = NextResponse.next();
 
       if (typeof result.setCookies === "function") {
-        response = result.setCookies(response);
+        result.setCookies(response);
       }
 
       response.headers.set("Cache-Control", "no-store");
@@ -137,7 +112,7 @@ export async function middleware(req) {
     } catch (error) {
       console.error(
         "Admin middleware authentication check failed:",
-        error?.message || "Unknown error"
+        error instanceof Error ? error.message : "Unknown error"
       );
 
       return NextResponse.json(
@@ -154,6 +129,8 @@ export async function middleware(req) {
       );
     }
   }
+
+  const response = NextResponse.next();
 
   if (pathname.startsWith("/api/")) {
     response.headers.set("Cache-Control", "no-store");
