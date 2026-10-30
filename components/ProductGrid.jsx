@@ -7,6 +7,7 @@ import { CartContext } from "@/context/CartContext";
 export default function ProductGrid({ products = [] }) {
   const { add } = useContext(CartContext);
   const [addedSku, setAddedSku] = useState("");
+  const [popupProduct, setPopupProduct] = useState(null);
 
   if (!products.length) {
     return (
@@ -129,6 +130,7 @@ export default function ProductGrid({ products = [] }) {
                   onClick={() => {
                     add(product);
                     setAddedSku(product.sku);
+                    setPopupProduct(product);
                     setTimeout(() => setAddedSku(""), 1400);
                   }}
                 >
@@ -141,6 +143,101 @@ export default function ProductGrid({ products = [] }) {
           </article>
         );
       })}
+
+      {/* Customer storefront add-to-cart popup */}
+      {popupProduct && (
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setPopupProduct(null);
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Product added to cart"
+            style={{
+              background: "#fff",
+              color: "#222",
+              borderRadius: "16px",
+              padding: "28px 22px",
+              width: "100%",
+              maxWidth: "360px",
+              textAlign: "center",
+              boxShadow: "0 15px 50px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "42px",
+                marginBottom: "10px",
+                color: "#183f32",
+              }}
+            >
+              ✓
+            </div>
+
+            <h2
+              style={{
+                margin: "0 0 10px",
+                fontSize: "21px",
+              }}
+            >
+              Added to your bag!
+            </h2>
+
+            <p
+              style={{
+                margin: "0 0 22px",
+                color: "#666",
+              }}
+            >
+              {popupProduct.name} has been added to your cart.
+            </p>
+
+            <a
+              href="/cart"
+              style={{
+                display: "block",
+                background: "#183f32",
+                color: "#fff",
+                padding: "13px",
+                borderRadius: "8px",
+                textDecoration: "none",
+                marginBottom: "10px",
+              }}
+            >
+              View Cart
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setPopupProduct(null)}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: "10px",
+                cursor: "pointer",
+                color: "#555",
+              }}
+            >
+              Continue Shopping
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
