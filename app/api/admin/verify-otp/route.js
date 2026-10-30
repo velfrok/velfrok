@@ -6,22 +6,76 @@ import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
+
+const ACCESS_COOKIE = "sb-access-token";
+const REFRESH_COOKIE = "sb-refresh-token";
+const OTP_ACCESS_COOKIE = "admin-otp-session";
+const OTP_REFRESH_COOKIE = "admin-otp-refresh-session";
 
 function fail(message, status = 400) {
-  return NextResponse.json({ error: message }, { status });
+  return NextResponse.json(
+    { error: message },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      },
+    }
+  );
+}
+
+function cookieOptions(maxAge, sameSite = "lax") {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite,
+    path: "/",
+    maxAge,
+  };
 }
 
 function clearTemporaryCookies(response) {
-  for (const name of ["admin-otp-session", "admin-otp-refresh-session"]) {
-    response.cookies.set(name, "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: "/",
-      maxAge: 0,
-    });
-  }
+  response.cookies.set(
+    OTP_ACCESS_COOKIE,
+    "",
+    cookieOptions(0, "strict")
+  );
+
+  response.cookies.set(
+    OTP_REFRESH_COOKIE,
+    "",
+    cookieOptions(0, "strict")
+  );
+
+  return response;
+}
+
+function clearAllAuthCookies(response) {
+  response.cookies.set(
+    ACCESS_COOKIE,
+    "",
+    cookieOptions(0)
+  );
+
+  response.cookies.set(
+    REFRESH_COOKIE,
+    "",
+    cookieOptions(0)
+  );
+
+  clearTemporaryCookies(response);
+  return response;
+}
+
+function createAuthClient(url, key) {
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
 }
 
 export async function POST(request) {
@@ -32,17 +86,27 @@ export async function POST(request) {
       await rateLimit(`admin-otp-verify:${ip}`, 10, 60);
     } catch (error) {
       if (error instanceof Response && error.status === 429) {
-        return fail("Too many verification requests. Please try again later.", 429);
+        return fail(
+          "Too many verification requests. Please try again later.",
+          429
+        );
       }
 
       console.error("Admin OTP rate limit check failed.");
       return fail(
-        "Verification service temporarily unavailable. Please try again later.",
+        "Verification service temporarily unavailable.",
         503
       );
     }
 
-    const body = await request.json();
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return fail("Invalid request.");
+    }
+
     const email = String(body.email || "").trim().toLowerCase();
     const otp = String(body.otp || "").trim();
 
@@ -61,25 +125,22 @@ export async function POST(request) {
       return fail("Admin verification is not fully configured.", 503);
     }
 
-    const accessToken = request.cookies.get("admin-otp-session")?.value;
-    const refreshToken = request.cookies.get("admin-otp-refresh-session")?.value;
+    const accessToken =
+      request.cookies.get(OTP_ACCESS_COOKIE)?.value;
+
+    const refreshToken =
+      request.cookies.get(OTP_REFRESH_COOKIE)?.value;
 
     if (!accessToken || !refreshToken) {
       const response = fail(
         "Your sign-in session expired. Please sign in again.",
         401
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
-    const authClient = createClient(url, anon, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
+    const authClient = createAuthClient(url, anon);
 
     const {
       data: { user },
@@ -95,16 +156,11 @@ export async function POST(request) {
         "Your sign-in session is invalid. Please sign in again.",
         401
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
-    const adminClient = createClient(url, serviceKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
+    const adminClient = createAuthClient(url, serviceKey);
 
     const { data: admin, error: adminError } = await adminClient
       .from("admins")
@@ -122,8 +178,8 @@ export async function POST(request) {
         "This account is not authorized as an administrator.",
         403
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
     const { data: record, error: otpError } = await adminClient
@@ -138,37 +194,52 @@ export async function POST(request) {
     }
 
     if (!record || record.user_id !== user.id) {
-      return fail("The code is invalid or expired. Please sign in again.", 401);
+      return fail(
+        "The code is invalid or expired. Please sign in again.",
+        401
+      );
     }
 
     if (Number(record.attempts || 0) >= 5) {
-      await adminClient.from("admin_login_otps").delete().eq("email", email);
+      await adminClient
+        .from("admin_login_otps")
+        .delete()
+        .eq("email", email);
 
       const response = fail(
         "Too many incorrect attempts. Please sign in again.",
         429
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
-    if (!record.expires_at || Date.parse(record.expires_at) <= Date.now()) {
-      await adminClient.from("admin_login_otps").delete().eq("email", email);
+    if (
+      !record.expires_at ||
+      Date.parse(record.expires_at) <= Date.now()
+    ) {
+      await adminClient
+        .from("admin_login_otps")
+        .delete()
+        .eq("email", email);
 
       const response = fail(
         "The code has expired. Please sign in again.",
         401
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
     const expectedHash = createHmac("sha256", otpSecret)
-      .update(email + ":" + otp)
+      .update(`${email}:${otp}`)
       .digest("hex");
 
     const expectedBuffer = Buffer.from(expectedHash, "hex");
-    const actualBuffer = Buffer.from(String(record.otp_hash || ""), "hex");
+    const actualBuffer = Buffer.from(
+      String(record.otp_hash || ""),
+      "hex"
+    );
 
     const matches =
       expectedBuffer.length === actualBuffer.length &&
@@ -177,31 +248,36 @@ export async function POST(request) {
     if (!matches) {
       await adminClient
         .from("admin_login_otps")
-        .update({ attempts: Number(record.attempts || 0) + 1 })
+        .update({
+          attempts: Number(record.attempts || 0) + 1,
+        })
         .eq("email", email);
 
       return fail("Incorrect verification code. Try again.", 401);
     }
 
-    // Verify the refresh token before establishing the persistent session.
-    const { data: refreshed, error: refreshError } =
-      await authClient.auth.refreshSession({
-        refresh_token: refreshToken,
-      });
+    const {
+      data: refreshed,
+      error: refreshError,
+    } = await authClient.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
 
     if (
       refreshError ||
-      !refreshed.session ||
-      !refreshed.user ||
-      refreshed.user.id !== user.id
+      !refreshed?.session ||
+      !refreshed?.user ||
+      refreshed.user.id !== user.id ||
+      String(refreshed.user.email || "").toLowerCase() !== email
     ) {
       console.error("Admin session refresh failed.");
+
       const response = fail(
         "Could not establish a persistent session. Please sign in again.",
         401
       );
-      clearTemporaryCookies(response);
-      return response;
+
+      return clearAllAuthCookies(response);
     }
 
     const { error: deleteError } = await adminClient
@@ -214,35 +290,42 @@ export async function POST(request) {
       return fail("Could not complete sign-in. Please try again.", 503);
     }
 
-    const response = NextResponse.json({
-      message: "Verification successful.",
-    });
+    const response = NextResponse.json(
+      { message: "Verification successful." },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          Pragma: "no-cache",
+        },
+      }
+    );
 
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: SESSION_MAX_AGE,
-    };
+    const options = cookieOptions(SESSION_MAX_AGE);
 
     response.cookies.set(
-      "sb-access-token",
+      ACCESS_COOKIE,
       refreshed.session.access_token,
-      cookieOptions
+      options
     );
 
     response.cookies.set(
-      "sb-refresh-token",
+      REFRESH_COOKIE,
       refreshed.session.refresh_token,
-      cookieOptions
+      options
     );
 
     clearTemporaryCookies(response);
 
+    console.info("[admin-otp] persistent session cookies issued");
+
     return response;
-  } catch {
-    console.error("Unexpected admin OTP verification error.");
+  } catch (error) {
+    console.error(
+      "Unexpected admin OTP verification error:",
+      error?.message || "Unknown error"
+    );
+
     return fail("Unable to verify the code right now.", 500);
   }
-}
+    }
