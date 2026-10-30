@@ -16,14 +16,18 @@ export default function AdminLoginPage() {
       method: "POST",
       credentials: "include",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(data.error || "Request failed. Please try again.");
+      throw new Error(
+        data.error || "Request failed. Please try again."
+      );
     }
 
     return data;
@@ -31,6 +35,7 @@ export default function AdminLoginPage() {
 
   async function handleLogin(event) {
     event.preventDefault();
+
     if (busy) return;
 
     setBusy(true);
@@ -43,7 +48,10 @@ export default function AdminLoginPage() {
       });
 
       setStep("otp");
-      setMessage(data.message || "Check your email for the verification code.");
+      setMessage(
+        data.message ||
+          "Check your email for the verification code."
+      );
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -53,6 +61,7 @@ export default function AdminLoginPage() {
 
   async function handleVerify(event) {
     event.preventDefault();
+
     if (busy || otp.length !== 6) return;
 
     setBusy(true);
@@ -63,6 +72,32 @@ export default function AdminLoginPage() {
         email: email.trim().toLowerCase(),
         otp,
       });
+
+      setMessage("Code verified. Checking your admin session...");
+
+      const sessionResponse = await fetch("/api/admin/session", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
+      });
+
+      const sessionData = await sessionResponse
+        .json()
+        .catch(() => ({}));
+
+      if (
+        !sessionResponse.ok ||
+        sessionData.authenticated !== true
+      ) {
+        setMessage(
+          "OTP verified, but the browser session was not detected. Please do not request another code yet. We need to inspect the session result."
+        );
+        setBusy(false);
+        return;
+      }
 
       window.location.replace("/admin");
     } catch (error) {
@@ -85,28 +120,38 @@ export default function AdminLoginPage() {
         {step === "login" ? (
           <form onSubmit={handleLogin}>
             <label htmlFor="admin-email">Admin email</label>
+
             <input
               id="admin-email"
               type="email"
               autoComplete="username"
               required
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) =>
+                setEmail(event.target.value)
+              }
               style={styles.input}
             />
 
             <label htmlFor="admin-password">Password</label>
+
             <input
               id="admin-password"
               type="password"
               autoComplete="current-password"
               required
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) =>
+                setPassword(event.target.value)
+              }
               style={styles.input}
             />
 
-            <button type="submit" disabled={busy} style={styles.button}>
+            <button
+              type="submit"
+              disabled={busy}
+              style={styles.button}
+            >
               {busy ? "Signing in..." : "Sign in"}
             </button>
           </form>
@@ -116,7 +161,10 @@ export default function AdminLoginPage() {
               Verification email: <strong>{email}</strong>
             </p>
 
-            <label htmlFor="admin-otp">Six-digit verification code</label>
+            <label htmlFor="admin-otp">
+              Six-digit verification code
+            </label>
+
             <input
               id="admin-otp"
               type="text"
@@ -127,7 +175,11 @@ export default function AdminLoginPage() {
               required
               value={otp}
               onChange={(event) =>
-                setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))
+                setOtp(
+                  event.target.value
+                    .replace(/\D/g, "")
+                    .slice(0, 6)
+                )
               }
               style={styles.input}
             />
