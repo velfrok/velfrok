@@ -1,5 +1,7 @@
+
 import "./globals.css";
 import { CartProvider } from "@/context/CartContext";
+import FloatingBuyNow from "@/components/FloatingBuyNow";
 
 export const metadata = {
   title: "VELFROK — Everyday essentials",
@@ -31,6 +33,8 @@ export default function RootLayout({ children }) {
           </header>
 
           <main className="site-main">{children}</main>
+
+          <FloatingBuyNow />
 
           <footer className="site-footer">
             <a className="wordmark" href="/">
