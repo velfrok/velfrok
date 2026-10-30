@@ -11,28 +11,41 @@ export default function AdminLoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  async function sendRequest(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Request failed. Please try again.");
+    }
+
+    return data;
+  }
+
   async function handleLogin(event) {
     event.preventDefault();
+    if (busy) return;
+
     setBusy(true);
     setMessage("");
 
     try {
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      const data = await sendRequest("/api/admin/login", {
+        email: email.trim().toLowerCase(),
+        password,
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Login failed.");
-      }
 
       setStep("otp");
       setMessage(data.message || "Check your email for the verification code.");
     } catch (error) {
-      setMessage(error.message || "Unable to sign in. Please try again.");
+      setMessage(error.message);
     } finally {
       setBusy(false);
     }
@@ -40,57 +53,30 @@ export default function AdminLoginPage() {
 
   async function handleVerify(event) {
     event.preventDefault();
+    if (busy || otp.length !== 6) return;
+
     setBusy(true);
     setMessage("");
 
     try {
-      const response = await fetch("/api/admin/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
+      await sendRequest("/api/admin/verify-otp", {
+        email: email.trim().toLowerCase(),
+        otp,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Verification failed.");
-      }
-
-      window.location.assign("/admin");
+      window.location.replace("/admin");
     } catch (error) {
-      setMessage(error.message || "Could not verify the code.");
-    } finally {
+      setMessage(error.message);
       setBusy(false);
     }
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        background: "#f3f4f6",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <section
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          padding: 28,
-          background: "#ffffff",
-          borderRadius: 16,
-          boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
-        }}
-      >
-        <h1 style={{ margin: "0 0 8px", color: "#111827" }}>
-          VELFROK Admin
-        </h1>
+    <main style={styles.page}>
+      <section style={styles.card}>
+        <h1 style={styles.heading}>VELFROK Admin</h1>
 
-        <p style={{ color: "#6b7280", marginBottom: 24 }}>
+        <p style={styles.description}>
           {step === "login"
             ? "Sign in with your administrator account."
             : "Enter the six-digit code sent to your email."}
@@ -105,8 +91,8 @@ export default function AdminLoginPage() {
               autoComplete="username"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={inputStyle}
+              onChange={(event) => setEmail(event.target.value)}
+              style={styles.input}
             />
 
             <label htmlFor="admin-password">Password</label>
@@ -116,17 +102,17 @@ export default function AdminLoginPage() {
               autoComplete="current-password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={inputStyle}
+              onChange={(event) => setPassword(event.target.value)}
+              style={styles.input}
             />
 
-            <button type="submit" disabled={busy} style={buttonStyle}>
+            <button type="submit" disabled={busy} style={styles.button}>
               {busy ? "Signing in..." : "Sign in"}
             </button>
           </form>
         ) : (
           <form onSubmit={handleVerify}>
-            <p style={{ color: "#374151", overflowWrap: "anywhere" }}>
+            <p style={styles.description}>
               Verification email: <strong>{email}</strong>
             </p>
 
@@ -140,13 +126,17 @@ export default function AdminLoginPage() {
               maxLength={6}
               required
               value={otp}
-              onChange={(e) =>
-                setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
+              onChange={(event) =>
+                setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))
               }
-              style={inputStyle}
+              style={styles.input}
             />
 
-            <button type="submit" disabled={busy || otp.length !== 6} style={buttonStyle}>
+            <button
+              type="submit"
+              disabled={busy || otp.length !== 6}
+              style={styles.button}
+            >
               {busy ? "Verifying..." : "Verify and continue"}
             </button>
 
@@ -158,12 +148,7 @@ export default function AdminLoginPage() {
                 setOtp("");
                 setMessage("");
               }}
-              style={{
-                ...buttonStyle,
-                background: "#e5e7eb",
-                color: "#111827",
-                marginTop: 10,
-              }}
+              style={styles.backButton}
             >
               Back to sign in
             </button>
@@ -171,19 +156,12 @@ export default function AdminLoginPage() {
         )}
 
         {message && (
-          <p
-            role="status"
-            style={{
-              marginTop: 18,
-              color: "#374151",
-              overflowWrap: "anywhere",
-            }}
-          >
+          <p role="status" style={styles.message}>
             {message}
           </p>
         )}
 
-        <p style={{ marginTop: 24, fontSize: 12, color: "#9ca3af" }}>
+        <p style={styles.footer}>
           Restricted access for authorized administrators only.
         </p>
       </section>
@@ -191,26 +169,73 @@ export default function AdminLoginPage() {
   );
 }
 
-const inputStyle = {
-  display: "block",
-  width: "100%",
-  boxSizing: "border-box",
-  padding: 12,
-  margin: "8px 0 18px",
-  border: "1px solid #d1d5db",
-  borderRadius: 8,
-  fontSize: 16,
+const styles = {
+  page: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    background: "#f3f4f6",
+    fontFamily: "Arial, sans-serif",
+  },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    padding: 28,
+    background: "#fff",
+    borderRadius: 16,
+    boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
+  },
+  heading: {
+    margin: "0 0 8px",
+    color: "#111827",
+  },
+  description: {
+    color: "#6b7280",
+    marginBottom: 24,
+    overflowWrap: "anywhere",
+  },
+  input: {
+    display: "block",
+    width: "100%",
+    boxSizing: "border-box",
+    padding: 12,
+    margin: "8px 0 18px",
+    border: "1px solid #d1d5db",
+    borderRadius: 8,
+    fontSize: 16,
+  },
+  button: {
+    width: "100%",
+    padding: 13,
+    border: "none",
+    borderRadius: 8,
+    background: "#111827",
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  backButton: {
+    width: "100%",
+    padding: 13,
+    marginTop: 10,
+    border: "none",
+    borderRadius: 8,
+    background: "#e5e7eb",
+    color: "#111827",
+    fontSize: 16,
+    cursor: "pointer",
+  },
+  message: {
+    marginTop: 18,
+    color: "#374151",
+    overflowWrap: "anywhere",
+  },
+  footer: {
+    marginTop: 24,
+    fontSize: 12,
+    color: "#9ca3af",
+  },
 };
-
-const buttonStyle = {
-  width: "100%",
-  padding: 13,
-  border: "none",
-  borderRadius: 8,
-  background: "#111827",
-  color: "#ffffff",
-  fontSize: 16,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-            
