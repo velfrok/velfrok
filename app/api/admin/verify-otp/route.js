@@ -2,14 +2,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
-
-const ACCESS_COOKIE = "sb-access-token";
-const REFRESH_COOKIE = "sb-refresh-token";
 const OTP_ACCESS_COOKIE = "admin-otp-session";
 const OTP_REFRESH_COOKIE = "admin-otp-refresh-session";
 
@@ -20,51 +17,24 @@ function fail(message, status = 400) {
       status,
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate",
+        Pragma: "no-cache",
       },
     }
   );
 }
 
-function cookieOptions(maxAge, sameSite = "lax") {
-  return {
+function clearTemporaryCookies(response) {
+  const options = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite,
+    sameSite: "strict",
     path: "/",
-    maxAge,
+    maxAge: 0,
   };
-}
 
-function clearTemporaryCookies(response) {
-  response.cookies.set(
-    OTP_ACCESS_COOKIE,
-    "",
-    cookieOptions(0, "strict")
-  );
+  response.cookies.set(OTP_ACCESS_COOKIE, "", options);
+  response.cookies.set(OTP_REFRESH_COOKIE, "", options);
 
-  response.cookies.set(
-    OTP_REFRESH_COOKIE,
-    "",
-    cookieOptions(0, "strict")
-  );
-
-  return response;
-}
-
-function clearAllAuthCookies(response) {
-  response.cookies.set(
-    ACCESS_COOKIE,
-    "",
-    cookieOptions(0)
-  );
-
-  response.cookies.set(
-    REFRESH_COOKIE,
-    "",
-    cookieOptions(0)
-  );
-
-  clearTemporaryCookies(response);
   return response;
 }
 
@@ -93,10 +63,7 @@ export async function POST(request) {
       }
 
       console.error("Admin OTP rate limit check failed.");
-      return fail(
-        "Verification service temporarily unavailable.",
-        503
-      );
+      return fail("Verification service temporarily unavailable.", 503);
     }
 
     let body;
@@ -132,12 +99,10 @@ export async function POST(request) {
       request.cookies.get(OTP_REFRESH_COOKIE)?.value;
 
     if (!accessToken || !refreshToken) {
-      const response = fail(
+      return fail(
         "Your sign-in session expired. Please sign in again.",
         401
       );
-
-      return clearAllAuthCookies(response);
     }
 
     const authClient = createAuthClient(url, anon);
@@ -152,12 +117,10 @@ export async function POST(request) {
       !user ||
       String(user.email || "").toLowerCase() !== email
     ) {
-      const response = fail(
+      return fail(
         "Your sign-in session is invalid. Please sign in again.",
         401
       );
-
-      return clearAllAuthCookies(response);
     }
 
     const adminClient = createAuthClient(url, serviceKey);
@@ -174,12 +137,10 @@ export async function POST(request) {
     }
 
     if (!admin) {
-      const response = fail(
+      return fail(
         "This account is not authorized as an administrator.",
         403
       );
-
-      return clearAllAuthCookies(response);
     }
 
     const { data: record, error: otpError } = await adminClient
@@ -206,12 +167,10 @@ export async function POST(request) {
         .delete()
         .eq("email", email);
 
-      const response = fail(
+      return fail(
         "Too many incorrect attempts. Please sign in again.",
         429
       );
-
-      return clearAllAuthCookies(response);
     }
 
     if (
@@ -223,12 +182,10 @@ export async function POST(request) {
         .delete()
         .eq("email", email);
 
-      const response = fail(
+      return fail(
         "The code has expired. Please sign in again.",
         401
       );
-
-      return clearAllAuthCookies(response);
     }
 
     const expectedHash = createHmac("sha256", otpSecret)
@@ -256,6 +213,8 @@ export async function POST(request) {
       return fail("Incorrect verification code. Try again.", 401);
     }
 
+    // Rotate the temporary OTP session before creating the
+    // standard Supabase SSR persistent cookie session.
     const {
       data: refreshed,
       error: refreshError,
@@ -272,12 +231,10 @@ export async function POST(request) {
     ) {
       console.error("Admin session refresh failed.");
 
-      const response = fail(
+      return fail(
         "Could not establish a persistent session. Please sign in again.",
         401
       );
-
-      return clearAllAuthCookies(response);
     }
 
     const { error: deleteError } = await adminClient
@@ -290,6 +247,7 @@ export async function POST(request) {
       return fail("Could not complete sign-in. Please try again.", 503);
     }
 
+    // This response receives the standard Supabase SSR auth cookies.
     const response = NextResponse.json(
       { message: "Verification successful." },
       {
@@ -301,23 +259,43 @@ export async function POST(request) {
       }
     );
 
-    const options = cookieOptions(SESSION_MAX_AGE);
+    const supabase = createServerClient(url, anon, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    });
 
-    response.cookies.set(
-      ACCESS_COOKIE,
-      refreshed.session.access_token,
-      options
-    );
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.setSession({
+        access_token: refreshed.session.access_token,
+        refresh_token: refreshed.session.refresh_token,
+      });
 
-    response.cookies.set(
-      REFRESH_COOKIE,
-      refreshed.session.refresh_token,
-      options
-    );
+    if (
+      sessionError ||
+      !sessionData?.session ||
+      sessionData.user?.id !== user.id
+    ) {
+      console.error("Standard Supabase SSR session creation failed.");
+
+      return fail(
+        "Could not save your administrator session.",
+        500
+      );
+    }
 
     clearTemporaryCookies(response);
 
-    console.info("[admin-otp] persistent session cookies issued");
+    console.info(
+      "[admin-otp] standard Supabase SSR session cookies issued"
+    );
 
     return response;
   } catch (error) {
@@ -328,4 +306,4 @@ export async function POST(request) {
 
     return fail("Unable to verify the code right now.", 500);
   }
-    }
+}
