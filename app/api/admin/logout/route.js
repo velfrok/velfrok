@@ -1,9 +1,21 @@
 
 import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(request) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    return NextResponse.json(
+      { error: "Authentication is not configured." },
+      { status: 503 }
+    );
+  }
+
   const response = NextResponse.redirect(
     new URL("/admin/login", request.url),
     303
@@ -15,31 +27,35 @@ export async function POST(request) {
   );
   response.headers.set("Pragma", "no-cache");
 
-  const permanentCookieOptions = {
+  const supabase = createServerClient(url, anon, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
+        });
+      },
+    },
+  });
+
+  const { error } = await supabase.auth.signOut({
+    scope: "local",
+  });
+
+  if (error) {
+    console.error("[admin-logout] Supabase sign-out failed.");
+  }
+
+  const temporaryCookieOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "strict",
     path: "/",
     maxAge: 0,
     expires: new Date(0),
   };
-
-  const temporaryCookieOptions = {
-    ...permanentCookieOptions,
-    sameSite: "strict",
-  };
-
-  response.cookies.set(
-    "sb-access-token",
-    "",
-    permanentCookieOptions
-  );
-
-  response.cookies.set(
-    "sb-refresh-token",
-    "",
-    permanentCookieOptions
-  );
 
   response.cookies.set(
     "admin-otp-session",
@@ -53,7 +69,7 @@ export async function POST(request) {
     temporaryCookieOptions
   );
 
-  console.info("[admin-logout] session cookies cleared");
+  console.info("[admin-logout] standard Supabase session cleared");
 
   return response;
 }
