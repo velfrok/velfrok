@@ -7,7 +7,7 @@ import {
 
 const ALLOWED_ORIGINS = (process.env.NEXT_PUBLIC_SITE_URL || "")
   .split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/$/, ""))
   .filter(Boolean);
 
 function clearSessionCookies(response) {
@@ -21,10 +21,12 @@ function clearSessionCookies(response) {
 
   response.cookies.set("sb-access-token", "", options);
   response.cookies.set("sb-refresh-token", "", options);
+
   response.cookies.set("admin-otp-session", "", {
     ...options,
     sameSite: "strict",
   });
+
   response.cookies.set("admin-otp-refresh-session", "", {
     ...options,
     sameSite: "strict",
@@ -33,9 +35,76 @@ function clearSessionCookies(response) {
   return response;
 }
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    return true;
+  }
+
+  try {
+    const hostname = new URL(origin).hostname;
+
+    return (
+      hostname === "vercel.app" ||
+      hostname.endsWith(".vercel.app")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function middleware(req) {
   const { pathname } = req.nextUrl;
-  let response;
+  const origin = req.headers.get("origin");
+
+  if (pathname.startsWith("/api/")) {
+    if (!isAllowedOrigin(origin)) {
+      return new NextResponse("Forbidden", {
+        status: 403,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (req.method === "OPTIONS") {
+      const preflight = new NextResponse(null, {
+        status: 204,
+      });
+
+      if (origin) {
+        preflight.headers.set(
+          "Access-Control-Allow-Origin",
+          origin
+        );
+        preflight.headers.set(
+          "Access-Control-Allow-Credentials",
+          "true"
+        );
+        preflight.headers.set("Vary", "Origin");
+      }
+
+      preflight.headers.set(
+        "Access-Control-Allow-Methods",
+        "GET,POST,PATCH,DELETE,OPTIONS"
+      );
+
+      preflight.headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization"
+      );
+
+      preflight.headers.set(
+        "Access-Control-Max-Age",
+        "600"
+      );
+
+      return preflight;
+    }
+  }
+
+  let response = NextResponse.next();
 
   if (
     pathname.startsWith("/admin") &&
@@ -51,45 +120,55 @@ export async function middleware(req) {
           clearSessionCookies(response);
         }
 
+        response.headers.set("Cache-Control", "no-store");
         return response;
       }
 
       response = NextResponse.next();
 
-      // If the access token was refreshed, save the rotated tokens.
-      response = result.setCookies(response);
+      if (typeof result.setCookies === "function") {
+        response = result.setCookies(response);
+      }
 
-    } catch {
-      console.error("Admin middleware authentication check failed.");
-      return adminLoginRedirect(req);
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("Pragma", "no-cache");
+
+      return response;
+    } catch (error) {
+      console.error(
+        "Admin middleware authentication check failed:",
+        error?.message || "Unknown error"
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Admin session verification is temporarily unavailable. Please retry.",
+        },
+        {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        }
+      );
     }
-  } else {
-    response = NextResponse.next();
   }
 
-  const origin = req.headers.get("origin");
-
   if (pathname.startsWith("/api/")) {
-    if (
-      origin &&
-      !ALLOWED_ORIGINS.includes(origin) &&
-      !origin.includes(".vercel.app")
-    ) {
-      return new NextResponse("Forbidden", { status: 403 });
-    }
+    response.headers.set("Cache-Control", "no-store");
 
-    response.headers.set(
-      "Access-Control-Allow-Origin",
-      origin || ALLOWED_ORIGINS[0] || "*"
-    );
-    response.headers.set(
-      "Access-Control-Allow-Methods",
-      "GET,POST,PATCH,DELETE,OPTIONS"
-    );
-    response.headers.set(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization"
-    );
+    if (origin) {
+      response.headers.set(
+        "Access-Control-Allow-Origin",
+        origin
+      );
+      response.headers.set(
+        "Access-Control-Allow-Credentials",
+        "true"
+      );
+      response.headers.set("Vary", "Origin");
+    }
   }
 
   return response;
