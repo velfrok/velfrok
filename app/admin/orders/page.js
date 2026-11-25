@@ -1,0 +1,635 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+
+const cellStyle = {
+  padding: "12px",
+  textAlign: "left",
+  verticalAlign: "top",
+  borderBottom: "1px solid #e3e8f0",
+  whiteSpace: "nowrap",
+};
+
+const buttonStyle = {
+  padding: "8px 10px",
+  border: "1px solid #d0d5dd",
+  borderRadius: "7px",
+  background: "#fff",
+  color: "#344054",
+  cursor: "pointer",
+  fontWeight: 700,
+  margin: "2px",
+};
+
+function Status({ value }) {
+  const status = value || "unknown";
+
+  const color =
+    status === "paid" || status === "utr_submitted"
+      ? "#067647"
+      : status === "failed" ||
+          status === "abandoned" ||
+          status === "expired" ||
+          status === "cancelled"
+        ? "#b42318"
+        : "#6941c6";
+
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "4px 8px",
+        borderRadius: "6px",
+        background: "#f2f4f7",
+        color,
+        fontWeight: 700,
+        fontSize: "12px",
+      }}
+    >
+      {String(status).replaceAll("_", " ")}
+    </span>
+  );
+}
+
+/*
+ * A valid submitted UTR must exist before payment approval
+ * can be enabled. This is a UI check, not proof of payment.
+ */
+function hasValidSubmittedUtr(order) {
+  const payments = Array.isArray(order?.payment_intents)
+    ? order.payment_intents
+    : order?.payment_intents
+      ? [order.payment_intents]
+      : [];
+
+  return payments.some(
+    (payment) =>
+      payment?.status === "utr_submitted" &&
+      typeof payment?.utr === "string" &&
+      payment.utr.trim().length >= 6
+  );
+}
+
+export default function OrdersPage() {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  // Courier companies
+  const [couriers, setCouriers] = useState([]);
+  const couriersLoaded = useRef(false);
+
+  // Dispatch modal state
+  const [dispatchModal, setDispatchModal] = useState(null); // { order }
+  const [dispatchCourier, setDispatchCourier] = useState("");
+  const [dispatchAwb, setDispatchAwb] = useState("");
+  const [dispatchBusy, setDispatchBusy] = useState(false);
+
+  const loadOrders = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/admin/orders", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Could not load orders.");
+      }
+
+      setOrders(Array.isArray(result.orders) ? result.orders : []);
+    } catch (err) {
+      setError(err.message || "Could not load orders.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load courier companies once
+  const loadCouriers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/couriers", { credentials: "include", cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && json.couriers?.length) {
+        setCouriers(json.couriers);
+      }
+    } catch {
+      // non-fatal — dispatcher can still type manually
+    }
+  }, []);
+
+  useEffect(() => {
+    loadOrders();
+    if (!couriersLoaded.current) {
+      couriersLoaded.current = true;
+      loadCouriers();
+    }
+  }, [loadOrders, loadCouriers]);
+
+  // Opens the dispatch modal; actual API call happens inside the modal.
+  function openDispatchModal(order) {
+    setDispatchCourier(couriers[0]?.id || "");
+    setDispatchAwb("");
+    setDispatchModal({ order });
+  }
+
+  async function submitDispatch() {
+    if (!dispatchModal) return;
+    if (!dispatchCourier) { setError("Please select a courier."); return; }
+    if (!dispatchAwb.trim()) { setError("Please enter the AWB / tracking number."); return; }
+
+    setDispatchBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const res = await fetch("/api/admin/orders", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          orderId: dispatchModal.order.id,
+          orderStatus: "dispatched",
+          courierCompany: dispatchCourier,
+          awbNumber: dispatchAwb.trim(),
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "The action was rejected.");
+      setNotice("Order dispatched successfully.");
+      setDispatchModal(null);
+      await loadOrders();
+    } catch (err) {
+      setError(err.message || "Could not dispatch the order.");
+    } finally {
+      setDispatchBusy(false);
+    }
+  }
+
+  async function performAction(order, action) {
+    if (busyId) return;
+
+    if (
+      action === "paid" &&
+      !hasValidSubmittedUtr(order)
+    ) {
+      setError(
+        "Payment approval blocked: no valid submitted UTR was found. Refresh the order and verify its payment details."
+      );
+      return;
+    }
+
+    // Dispatch uses its own modal — not window.confirm
+    if (action === "dispatched") {
+      openDispatchModal(order);
+      return;
+    }
+
+    const descriptions = {
+      paid:
+        "Have you independently verified the actual bank/UPI receipt and matched the submitted UTR to this order? Stock will be deducted by the existing payment function.",
+      failed:
+        "Mark this order's payment as failed? This does not issue a refund.",
+      packed:
+        "Accept and pack this paid order?",
+      cancelled:
+        "Cancel this order? Any refund must be arranged manually; this action does not issue a refund.",
+      dispatched:
+        "Mark this order as dispatched?",
+      delivered:
+        "Mark this order as delivered?",
+    };
+
+    if (!window.confirm(descriptions[action])) return;
+
+    setBusyId(order.id);
+    setError("");
+    setNotice("");
+
+    try {
+      const payload =
+        action === "paid" || action === "failed"
+          ? { orderId: order.id, paymentStatus: action }
+          : { orderId: order.id, orderStatus: action };
+
+      const response = await fetch("/api/admin/orders", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "The action was rejected.");
+      }
+
+      setNotice(
+        action === "paid"
+          ? "Payment approval completed. Refreshing order details."
+          : action === "cancelled"
+            ? "Order cancelled. Any refund must be handled manually."
+            : "Order updated successfully."
+      );
+
+      await loadOrders();
+    } catch (err) {
+      setError(
+        err.message ||
+          "The action could not be completed. Refresh the order before retrying."
+      );
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  function actionButton(order, label, action, disabled = false) {
+    const isDisabled = Boolean(busyId) || disabled;
+
+    return (
+      <button
+        key={action}
+        type="button"
+        style={{
+          ...buttonStyle,
+          opacity: isDisabled ? 0.45 : 1,
+          cursor: isDisabled ? "not-allowed" : "pointer",
+          background: isDisabled ? "#f2f4f7" : "#fff",
+        }}
+        disabled={isDisabled}
+        onClick={() => performAction(order, action)}
+      >
+        {busyId === order.id ? "Processing..." : label}
+      </button>
+    );
+  }
+
+  function renderActions(order) {
+    const actions = [];
+    const canApprovePayment = hasValidSubmittedUtr(order);
+
+    if (
+      order.payment_status !== "paid" &&
+      order.payment_status !== "failed" &&
+      order.status !== "cancelled" &&
+      order.status !== "delivered"
+    ) {
+      actions.push(
+        actionButton(order, "Mark Paid", "paid", !canApprovePayment)
+      );
+
+      actions.push(
+        actionButton(order, "Mark Payment Failed", "failed")
+      );
+    }
+
+    if (order.status === "placed") {
+      if (order.payment_status === "paid") {
+        actions.push(
+          actionButton(order, "Accept / Pack", "packed")
+        );
+      }
+
+      actions.push(
+        actionButton(order, "Reject / Cancel", "cancelled")
+      );
+    }
+
+    if (order.status === "packed") {
+      actions.push(
+        actionButton(order, "Dispatch", "dispatched")
+      );
+
+      actions.push(
+        actionButton(order, "Cancel Order", "cancelled")
+      );
+    }
+
+    if (order.status === "dispatched") {
+      actions.push(
+        actionButton(order, "Mark Delivered", "delivered")
+      );
+    }
+
+    if (actions.length === 0) {
+      return (
+        <span style={{ color: "#667085" }}>
+          No actions available
+        </span>
+      );
+    }
+
+    return (
+      <div style={{ minWidth: "170px" }}>
+        {actions}
+        {!canApprovePayment &&
+          order.payment_status !== "paid" &&
+          order.payment_status !== "failed" &&
+          order.status !== "cancelled" &&
+          order.status !== "delivered" && (
+            <p
+              style={{
+                color: "#b42318",
+                fontSize: "11px",
+                whiteSpace: "normal",
+                margin: "6px 2px",
+              }}
+            >
+              Payment approval requires a submitted UTR
+              of at least 6 characters.
+            </p>
+          )}
+      </div>
+    );
+  }
+
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        padding: "24px",
+        background: "#f5f7fb",
+        color: "#172033",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      {/* ── Dispatch Modal ─────────────────────────── */}
+      {dispatchModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 16,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDispatchModal(null); }}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: 16,
+              padding: "28px 24px", maxWidth: 440, width: "100%",
+              boxShadow: "0 8px 32px #17203330",
+            }}
+          >
+            <h2 style={{ fontSize: 18, margin: "0 0 6px" }}>Dispatch Order</h2>
+            <p style={{ color: "#68738a", fontSize: 13, margin: "0 0 20px" }}>
+              Order: <strong>{dispatchModal.order.order_code || dispatchModal.order.id}</strong>
+            </p>
+
+            <label style={{ display: "block", fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              Courier Company *
+            </label>
+            {couriers.length > 0 ? (
+              <select
+                value={dispatchCourier}
+                onChange={(e) => setDispatchCourier(e.target.value)}
+                disabled={dispatchBusy}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 16,
+                  boxSizing: "border-box", outline: "none",
+                }}
+              >
+                <option value="">— Select courier —</option>
+                {couriers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                placeholder="Type courier name…"
+                value={dispatchCourier}
+                onChange={(e) => setDispatchCourier(e.target.value)}
+                disabled={dispatchBusy}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 16,
+                  boxSizing: "border-box", outline: "none",
+                }}
+              />
+            )}
+
+            <label style={{ display: "block", fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              AWB / Tracking Number *
+            </label>
+            <input
+              placeholder="Enter AWB or tracking number"
+              value={dispatchAwb}
+              onChange={(e) => setDispatchAwb(e.target.value)}
+              disabled={dispatchBusy}
+              maxLength={80}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8,
+                border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 24,
+                boxSizing: "border-box", outline: "none",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setDispatchModal(null)}
+                disabled={dispatchBusy}
+                style={{
+                  padding: "10px 20px", border: "1px solid #d0d5dd",
+                  borderRadius: 8, background: "#fff", fontWeight: 700,
+                  cursor: "pointer", fontSize: 14,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDispatch}
+                disabled={dispatchBusy || !dispatchCourier || !dispatchAwb.trim()}
+                style={{
+                  padding: "10px 20px", background: "#172033", color: "#fff",
+                  border: 0, borderRadius: 8, fontWeight: 700,
+                  cursor: "pointer", fontSize: 14,
+                  opacity: (dispatchBusy || !dispatchCourier || !dispatchAwb.trim()) ? 0.5 : 1,
+                }}
+              >
+                {dispatchBusy ? "Dispatching…" : "Confirm Dispatch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ───────────────────────────────────────────── */}
+
+      <Link
+        href="/admin"
+        style={{ color: "#e87528", fontWeight: 700 }}
+      >
+        ← Back to Admin Dashboard
+      </Link>
+
+      <h1 style={{ marginTop: "24px" }}>
+        Orders Management
+      </h1>
+
+      <p style={{ color: "#475467", lineHeight: 1.6 }}>
+        Independently verify bank/UPI receipts and match
+        the submitted UTR before approving payments.
+        Payment approval uses the existing stock-decrement
+        function. Cancellation does not issue refunds;
+        arrange refunds manually.
+      </p>
+
+      <button
+        type="button"
+        style={buttonStyle}
+        disabled={loading || Boolean(busyId)}
+        onClick={loadOrders}
+      >
+        {loading ? "Loading..." : "Refresh Orders"}
+      </button>
+
+      {error && (
+        <p
+          role="alert"
+          style={{
+            color: "#b42318",
+            background: "#fef3f2",
+            padding: "12px",
+            borderRadius: "8px",
+            marginTop: "12px",
+          }}
+        >
+          {error}
+        </p>
+      )}
+
+      {notice && (
+        <p
+          role="status"
+          style={{
+            color: "#067647",
+            background: "#ecfdf3",
+            padding: "12px",
+            borderRadius: "8px",
+            marginTop: "12px",
+          }}
+        >
+          {notice}
+        </p>
+      )}
+
+      <section
+        style={{
+          background: "#fff",
+          border: "1px solid #e3e8f0",
+          borderRadius: "12px",
+          padding: "20px",
+          marginTop: "20px",
+          overflowX: "auto",
+        }}
+      >
+        {loading && <p>Loading orders...</p>}
+
+        {!loading && !error && orders.length === 0 && (
+          <p>No orders found.</p>
+        )}
+
+        {!loading && orders.length > 0 && (
+          <>
+            <p>Total orders loaded: {orders.length}</p>
+
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "13px",
+              }}
+            >
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  {[
+                    "Order Code",
+                    "Order ID",
+                    "User ID",
+                    "Payment Status",
+                    "Order Status",
+                    "Payment Intent",
+                    "Submitted UTR",
+                    "Payment Expiry",
+                    "Actions",
+                  ].map((heading) => (
+                    <th key={heading} style={cellStyle}>
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {orders.map((order) => {
+                  const payment = Array.isArray(
+                    order.payment_intents
+                  )
+                    ? order.payment_intents[0]
+                    : order.payment_intents;
+
+                  return (
+                    <tr key={order.id}>
+                      <td style={cellStyle}>
+                        {order.order_code || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {order.id || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {order.user_id || "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={order.payment_status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={order.status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <Status value={payment?.status} />
+                      </td>
+
+                      <td style={cellStyle}>
+                        {payment?.utr || "No UTR submitted"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {payment?.expires_at
+                          ? new Date(
+                              payment.expires_at
+                            ).toLocaleString()
+                          : "—"}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {renderActions(order)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
